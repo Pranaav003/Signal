@@ -4,7 +4,27 @@ Reddit lead intelligence for small businesses.
 
 ## Local development (quick checklist)
 
+**One command (after first-time `brew install` deps below):**
+
+```bash
+./scripts/local-up.sh
+```
+
+This starts Redis + Postgres (if installed via Homebrew), runs migrations, then launches **API + worker + Vite** in one terminal (`Ctrl+C` stops all three).
+
 From the repository root (after `git clone`, the folder is usually `Signal` or `signal`):
+
+### First-time dependencies (Homebrew)
+
+```bash
+brew install redis postgresql@16
+brew services start redis
+brew services start postgresql@16
+export PATH="/opt/homebrew/opt/postgresql@16/bin:$PATH"
+createdb signal_dev || true
+```
+
+Set `DATABASE_URL` in `backend/.env` (see `.env.example`). For the default Homebrew role on this machine, `postgresql://YOUR_USERNAME@127.0.0.1:5432/signal_dev` usually works.
 
 ### Terminal 1 — Backend API
 
