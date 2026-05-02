@@ -32,7 +32,7 @@ Set `DATABASE_URL` in `backend/.env` (see `.env.example`). For the default Homeb
 cd backend
 cp .env.example .env
 # Edit .env: set DATABASE_URL, REDIS_URL, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET,
-# REDDIT_USER_AGENT, ANTHROPIC_API_KEY (and JWT_SECRET for future auth).
+# REDDIT_USER_AGENT, OPENAI_API_KEY (and JWT_SECRET for future auth).
 npm install
 npm run migrate
 npm run dev
@@ -85,7 +85,7 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 4. In the Render dashboard, **manually add** these secrets (they are `sync: false` in the blueprint):
    - `REDDIT_CLIENT_ID`
    - `REDDIT_CLIENT_SECRET`
-   - `ANTHROPIC_API_KEY`
+   - `OPENAI_API_KEY`
 5. Click **Deploy**.
 6. **Logs to verify**
    - **signal-backend:** `✓ Database connected` and `✓ Scheduler started: …`
@@ -103,7 +103,8 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 | REDDIT_CLIENT_ID | From reddit.com/prefs/apps |
 | REDDIT_CLIENT_SECRET | From reddit.com/prefs/apps |
 | REDDIT_USER_AGENT | Format: `Signal/1.0 by YourUsername` (Render blueprint sets a default; override if you prefer) |
-| ANTHROPIC_API_KEY | From console.anthropic.com |
+| OPENAI_API_KEY | From platform.openai.com (ChatGPT / OpenAI API) |
+| OPENAI_MODEL | Optional; default `gpt-4o-mini` |
 | JWT_SECRET | Random string; auto-generated on Render for the web service |
 
 For the **static frontend** build, **`VITE_API_URL`** is wired from the **`signal-backend`** service URL in **`render.yaml`**.

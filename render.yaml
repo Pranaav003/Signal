@@ -22,7 +22,7 @@ services:
         sync: false
       - key: REDDIT_USER_AGENT
         value: Signal/1.0
-      - key: ANTHROPIC_API_KEY
+      - key: OPENAI_API_KEY
         sync: false
       - key: JWT_SECRET
         generateValue: true
@@ -50,7 +50,7 @@ services:
         sync: false
       - key: REDDIT_USER_AGENT
         value: Signal/1.0
-      - key: ANTHROPIC_API_KEY
+      - key: OPENAI_API_KEY
         sync: false
 
   - type: web
