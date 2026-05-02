@@ -1,0 +1,74 @@
+services:
+  - type: web
+    name: signal-backend
+    env: node
+    rootDir: backend
+    buildCommand: npm install && npm run migrate
+    startCommand: npm start
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: signal-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: signal-redis
+          property: connectionString
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: REDDIT_USER_AGENT
+        value: Signal/1.0
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: JWT_SECRET
+        generateValue: true
+
+  - type: worker
+    name: signal-worker
+    env: node
+    rootDir: backend
+    buildCommand: npm install
+    startCommand: node src/jobs/worker.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: signal-db
+          property: connectionString
+      - key: REDIS_URL
+        fromService:
+          name: signal-redis
+          property: connectionString
+      - key: REDDIT_CLIENT_ID
+        sync: false
+      - key: REDDIT_CLIENT_SECRET
+        sync: false
+      - key: REDDIT_USER_AGENT
+        value: Signal/1.0
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+  - type: web
+    name: signal-frontend
+    env: static
+    rootDir: frontend
+    buildCommand: npm install && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: VITE_API_URL
+        fromService:
+          name: signal-backend
+          property: url
+
+databases:
+  - name: signal-db
+    plan: free
+
+redis:
+  - name: signal-redis
+    plan: free

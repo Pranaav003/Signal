@@ -1,0 +1,119 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg: #09090f;
+  --surface: #111118;
+  --surface-2: #1a1a24;
+  --border: #1e1e2e;
+  --accent: #6ee7b7;
+  --accent-dim: rgba(110, 231, 183, 0.15);
+  --accent-glow: rgba(110, 231, 183, 0.4);
+  --text: #f0f0f5;
+  --muted: #6b6b80;
+  --danger: #f87171;
+  --warn: #fbbf24;
+}
+
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    min-height: 100%;
+  }
+
+  body {
+    margin: 0;
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  code,
+  .font-mono {
+    font-family: "IBM Plex Mono", ui-monospace, monospace;
+  }
+}
+
+@keyframes signal-pulse {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes signal-skeleton {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+@keyframes signal-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+@keyframes signal-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes signal-draft-open {
+  from {
+    max-height: 0;
+    opacity: 0;
+  }
+  to {
+    max-height: 200px;
+    opacity: 1;
+  }
+}
+
+.signal-modal-overlay {
+  animation: signal-modal-in 150ms ease-out both;
+}
+
+.signal-skeleton {
+  animation: signal-skeleton 1.35s ease-in-out infinite;
+}
+
+.signal-draft-panel {
+  animation: signal-draft-open 200ms ease forwards;
+  overflow: hidden;
+}
+
+.signal-cursor {
+  display: inline-block;
+  width: 8px;
+  height: 1em;
+  margin-left: 2px;
+  background: var(--accent);
+  vertical-align: text-bottom;
+  animation: signal-blink 1s steps(1, start) infinite;
+}
+
+.signal-btn-focus:focus-visible {
+  outline: 2px solid var(--accent-glow);
+  outline-offset: 2px;
+}
