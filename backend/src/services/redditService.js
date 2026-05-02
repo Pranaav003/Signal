@@ -1,3 +1,8 @@
+if (process.env.USE_MOCK_REDDIT === 'true') {
+  module.exports = require('./mockRedditService');
+  return;
+}
+
 const axios = require('axios');
 
 const tokenCache = { token: null, expiresAt: 0 };

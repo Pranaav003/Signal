@@ -26,6 +26,8 @@ createdb signal_dev || true
 
 Set `DATABASE_URL` in `backend/.env` (see `.env.example`). For the default Homebrew role on this machine, `postgresql://YOUR_USERNAME@127.0.0.1:5432/signal_dev` usually works.
 
+**Reddit optional for local demos:** set `USE_MOCK_REDDIT=true` to use `mockRedditService` (realistic fake posts/comments; no Reddit API keys).
+
 ### Terminal 1 — Backend API
 
 ```bash
