@@ -1,47 +1,75 @@
 import { useEffect, useState } from 'react'
 
-import { api } from '../lib/api'
+import { BASE_URL } from '../lib/api'
 
-const STORAGE_KEY = 'signal_user_id'
-const DEMO_EMAIL = 'demo@signal.app'
+const CACHE_KEY = 'signal_user'
+
+function apiUrl(path) {
+  const root = String(BASE_URL || '').replace(/\/+$/, '')
+  const p = path.startsWith('/') ? path : `/${path}`
+  return root ? `${root}${p}` : p
+}
 
 export function useUser() {
-  const [userId, setUserId] = useState(null)
+  const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    let cancelled = false
-
-    async function ensureUser() {
+    const initUser = async () => {
       try {
-        const existing = localStorage.getItem(STORAGE_KEY)
+        let anonId = localStorage.getItem('signal_anon_id')
 
-        if (existing) {
-          if (!cancelled) setUserId(existing)
-          return
+        if (!anonId) {
+          anonId =
+            'anon_' +
+            Math.random().toString(36).slice(2) +
+            '_' +
+            Date.now().toString(36)
+          localStorage.setItem('signal_anon_id', anonId)
         }
 
-        const { data: user } = await api.post('/api/users', {
-          email: DEMO_EMAIL,
+        const email = `${anonId}@signal.anon`
+
+        const cached = localStorage.getItem(CACHE_KEY)
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached)
+            if (parsed?.id && parsed?.email === email) {
+              setUser(parsed)
+              setLoading(false)
+              return
+            }
+          } catch {
+            localStorage.removeItem(CACHE_KEY)
+          }
+        }
+
+        const res = await fetch(apiUrl('/api/users'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
         })
 
-        localStorage.setItem(STORAGE_KEY, user.id)
+        const data = await res.json()
 
-        if (!cancelled) setUserId(user.id)
-      } catch (e) {
-        console.error('[useUser]', e)
-        if (!cancelled) setUserId(null)
+        if (data?.id) {
+          localStorage.setItem(CACHE_KEY, JSON.stringify(data))
+          setUser(data)
+        }
+      } catch (err) {
+        console.error('[useUser] Failed to init user:', err)
       } finally {
-        if (!cancelled) setLoading(false)
+        setLoading(false)
       }
     }
 
-    ensureUser()
-
-    return () => {
-      cancelled = true
-    }
+    void initUser()
   }, [])
 
-  return { userId, loading, email: DEMO_EMAIL }
+  return {
+    user,
+    loading,
+    userId: user?.id ?? null,
+    email: user?.email ?? '',
+  }
 }

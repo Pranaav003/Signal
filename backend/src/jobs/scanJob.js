@@ -3,7 +3,8 @@ const Bull = require('bull');
 const pool = require('../db/connection');
 const { generateQueries } = require('../services/keywordProcessor');
 const { searchReddit, searchSubreddit } = require('../services/redditService');
-const { scoreResult, filterLowSignal } = require('../services/relevanceScorer');
+const { searchHN } = require('../services/hnService');
+const { scoreResultDetailed, filterLowSignal } = require('../services/relevanceScorer');
 
 const scanQueue = new Bull('reddit-scan', process.env.REDIS_URL);
 
@@ -32,6 +33,8 @@ function initWorker() {
     for (const q of queries) {
       const batch = await searchReddit(q);
       collected.push(...batch);
+      const hnBatch = await searchHN(q);
+      collected.push(...hnBatch);
     }
 
     for (const sub of subreddits) {
@@ -52,14 +55,30 @@ function initWorker() {
       deduped.push(item);
     }
 
-    const surviving = filterLowSignal(deduped, keywordSet);
+    const { rows: supRows } = await pool.query(
+      `SELECT post_id FROM thread_suppressions
+       WHERE user_id = $1
+         AND (
+           kind = 'mute'
+           OR (kind = 'snooze' AND snooze_until > NOW())
+         )`,
+      [keywordSet.user_id]
+    );
+    const suppressed = new Set(supRows.map((row) => row.post_id));
+
+    const surviving = filterLowSignal(deduped, keywordSet).filter(
+      (r) => r.post_id && !suppressed.has(r.post_id)
+    );
 
     let newLeads = 0;
 
     for (const r of surviving) {
       if (!r.url) continue;
 
-      const relevanceScore = scoreResult(r, keywordSet);
+      const { score: relevanceScore, reasons: scoreReasons } = scoreResultDetailed(
+        r,
+        keywordSet
+      );
 
       const ins = await pool.query(
         `INSERT INTO leads (
@@ -72,13 +91,17 @@ function initWorker() {
             url,
             author,
             subreddit,
-            relevance_score
+            relevance_score,
+            upvotes,
+            comment_count,
+            score_reasons
           )
-          VALUES ($1, $2, 'reddit', $3, $4, $5, $6, $7, $8, $9)
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
           ON CONFLICT (user_id, post_id) DO NOTHING`,
         [
           keywordSet.user_id,
           keywordSet.id,
+          r.platform || 'reddit',
           r.post_id,
           r.title ?? '',
           r.body_snippet ?? '',
@@ -86,6 +109,9 @@ function initWorker() {
           r.author ?? null,
           r.subreddit ?? null,
           relevanceScore,
+          Number(r.upvotes) || 0,
+          Number(r.comment_count) || 0,
+          Array.isArray(scoreReasons) ? scoreReasons : [],
         ]
       );
 

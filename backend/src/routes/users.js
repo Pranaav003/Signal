@@ -11,20 +11,25 @@ router.post('/', async (req, res) => {
     return res.status(400).json({ error: 'email is required' });
   }
 
+  const normalized = email.trim();
+
   try {
     const { rows } = await pool.query(
-      `INSERT INTO users (id, email) VALUES (gen_random_uuid(), $1) RETURNING *`,
-      [email.trim()]
+      `
+      INSERT INTO users (id, email)
+      VALUES (gen_random_uuid(), $1)
+      ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+      RETURNING id, email, created_at
+      `,
+      [normalized]
     );
 
-    return res.status(201).json(rows[0]);
+    const row = rows[0];
+    console.log('[users] upserted:', row);
+    return res.status(200).json(row);
   } catch (err) {
-    if (err.code === '23505') {
-      return res.status(409).json({ error: 'Email already exists' });
-    }
-
-    console.error('[users] POST /', err);
-    return res.status(500).json({ error: 'Failed to create user' });
+    console.error('[users] POST failed:', err);
+    return res.status(500).json({ error: err.message || 'Failed to create user' });
   }
 });
 

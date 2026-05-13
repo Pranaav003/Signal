@@ -6,10 +6,9 @@ export function useKeywordSets(userId) {
   const [keywordSets, setKeywordSets] = useState([])
   const [loading, setLoading] = useState(Boolean(userId))
 
+  /** Refetch without toggling `loading` — avoids sidebar / page “reload” flashes after creates or manual refresh. */
   const refresh = useCallback(async () => {
     if (!userId) return
-
-    setLoading(true)
 
     try {
       const { data } = await api.get(`/api/keyword-sets/user/${userId}`)
@@ -18,8 +17,6 @@ export function useKeywordSets(userId) {
     } catch (e) {
       console.error('[useKeywordSets] refresh', e)
       setKeywordSets([])
-    } finally {
-      setLoading(false)
     }
   }, [userId])
 
@@ -27,21 +24,50 @@ export function useKeywordSets(userId) {
     if (!userId) {
       setKeywordSets([])
       setLoading(false)
-      return
+      return undefined
     }
 
-    refresh()
-  }, [userId, refresh])
+    let cancelled = false
 
-  const createKeywordSet = useCallback(
-    async (productDescription) => {
-      if (!userId) throw new Error('missing userId')
+    ;(async () => {
+      setLoading(true)
 
       try {
-        const { data: created } = await api.post('/api/keyword-sets', {
-          user_id: userId,
-          product_description: productDescription,
-        })
+        const { data } = await api.get(`/api/keyword-sets/user/${userId}`)
+
+        if (!cancelled) setKeywordSets(Array.isArray(data) ? data : [])
+      } catch (e) {
+        console.error('[useKeywordSets] initial load', e)
+        if (!cancelled) setKeywordSets([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [userId])
+
+  const createKeywordSet = useCallback(
+    async (productDescription, scanIntervalHours = 6, pitchLine = null) => {
+      if (!userId) throw new Error('missing userId')
+
+      const hours = Number(scanIntervalHours)
+      const scan_interval_hours = [6, 12, 24].includes(hours) ? hours : 6
+
+      const body = {
+        user_id: userId,
+        product_description: productDescription,
+        scan_interval_hours,
+      }
+
+      if (typeof pitchLine === 'string' && pitchLine.trim()) {
+        body.pitch_line = pitchLine.trim()
+      }
+
+      try {
+        const { data: created } = await api.post('/api/keyword-sets', body)
 
         await refresh()
 

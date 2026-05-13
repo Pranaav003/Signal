@@ -1,0 +1,1767 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Signal — Reddit lead intelligence for founders</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Space+Grotesk:ital,wght@0,400;0,500;0,600;0,700;1,400&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      :root {
+        --bg: #07070e;
+        --bg-2: #0d0d1a;
+        --bg-3: #111122;
+        --border: #1a1a30;
+        --border-bright: #2a2a45;
+        --accent: #7c6af7;
+        --accent-2: #9d8fff;
+        --accent-glow: rgba(124, 106, 247, 0.15);
+        --accent-glow-strong: rgba(124, 106, 247, 0.3);
+        --green: #4ade80;
+        --yellow: #fbbf24;
+        --red: #f87171;
+        --text: #eeeef5;
+        --text-2: #9999bb;
+        --text-3: #55556a;
+        --max: 1100px;
+      }
+
+      *,
+      *::before,
+      *::after {
+        box-sizing: border-box;
+      }
+
+      html {
+        scroll-behavior: smooth;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-family: "Space Grotesk", system-ui, sans-serif;
+        font-size: 16px;
+        line-height: 1.5;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      .mono {
+        font-family: "IBM Plex Mono", ui-monospace, monospace;
+      }
+
+      .wrap {
+        max-width: var(--max);
+        margin: 0 auto;
+        padding: 0 24px;
+      }
+
+      /* Nav */
+      .nav {
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        height: 64px;
+        padding: 0 32px;
+        background: rgba(7, 7, 14, 0.85);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .nav-brand {
+        display: flex;
+        align-items: center;
+      }
+
+      .nav-logo {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 15px;
+        font-weight: 500;
+        letter-spacing: 0.25em;
+        color: var(--accent);
+      }
+
+      .nav-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .btn-nav-primary {
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 13px;
+        font-weight: 600;
+        color: #fff;
+        background: var(--accent);
+        border: none;
+        border-radius: 6px;
+        padding: 8px 18px;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        transition: background 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .btn-nav-primary:hover {
+        background: var(--accent-2);
+        box-shadow: 0 0 20px var(--accent-glow-strong);
+      }
+
+      /* Hero */
+      .hero {
+        background: radial-gradient(
+            ellipse 60% 50% at 50% 0%,
+            rgba(124, 106, 247, 0.12) 0%,
+            transparent 70%
+          ),
+          var(--bg);
+        padding: 120px 24px 80px;
+        text-align: center;
+      }
+
+      .hero-inner {
+        max-width: 800px;
+        margin: 0 auto;
+      }
+
+      .hero-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        border: 1px solid var(--border-bright);
+        background: var(--bg-2);
+        border-radius: 999px;
+        padding: 6px 14px;
+        opacity: 0;
+        animation: heroFade 0.4s ease forwards;
+      }
+
+      .hero-pill-dot {
+        width: 6px;
+        height: 6px;
+        border-radius: 50%;
+        background: var(--green);
+        box-shadow: 0 0 8px var(--green);
+        animation: pulseDot 2s ease-in-out infinite;
+      }
+
+      @keyframes pulseDot {
+        0%,
+        100% {
+          opacity: 1;
+        }
+        50% {
+          opacity: 0.3;
+        }
+      }
+
+      @keyframes heroFade {
+        to {
+          opacity: 1;
+        }
+      }
+
+      @keyframes heroUp {
+        from {
+          opacity: 0;
+          transform: translateY(20px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .hero-pill span {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+        color: var(--text-2);
+      }
+
+      .hero h1 {
+        margin: 28px 0 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 68px;
+        line-height: 1.08;
+        color: var(--text);
+        opacity: 0;
+        animation: heroUp 0.5s ease 0.1s forwards;
+      }
+
+      .hero h1 .accent-line {
+        color: var(--accent);
+      }
+
+      .hero-subline {
+        margin-top: 12px;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 500;
+        font-size: 28px;
+        color: var(--text-2);
+        opacity: 0;
+        animation: heroUp 0.5s ease 0.1s forwards;
+      }
+
+      .hero-body {
+        margin: 20px auto 0;
+        max-width: 560px;
+        font-size: 17px;
+        color: var(--text-3);
+        line-height: 1.7;
+        opacity: 0;
+        animation: heroUp 0.5s ease 0.2s forwards;
+      }
+
+      .hero-ctas {
+        margin-top: 40px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        gap: 14px;
+        opacity: 0;
+        animation: heroUp 0.5s ease 0.3s forwards;
+      }
+
+      .btn-hero-primary {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 15px;
+        color: #fff;
+        background: var(--accent);
+        border: none;
+        border-radius: 8px;
+        padding: 14px 28px;
+        cursor: pointer;
+        text-decoration: none;
+        display: inline-block;
+        box-shadow: 0 0 32px var(--accent-glow-strong);
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .btn-hero-primary:hover {
+        transform: translateY(-1px);
+        box-shadow: 0 0 48px var(--accent-glow-strong);
+        background: var(--accent-2);
+      }
+
+      .btn-hero-secondary {
+        font-size: 14px;
+        color: var(--text-3);
+        background: none;
+        border: none;
+        cursor: pointer;
+        text-decoration: none;
+        transition: color 0.15s ease;
+      }
+
+      .btn-hero-secondary:hover {
+        color: var(--text-2);
+        text-decoration: underline;
+      }
+
+      .hero-trust {
+        margin-top: 20px;
+        font-size: 12px;
+        color: var(--text-3);
+        font-family: "IBM Plex Mono", monospace;
+        opacity: 0;
+        animation: heroFade 0.5s ease 0.45s forwards;
+      }
+
+      .hero-stats {
+        margin-top: 56px;
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: stretch;
+        gap: 0;
+        opacity: 0;
+        animation: heroFade 0.5s ease 0.5s forwards;
+      }
+
+      .hero-stat {
+        padding: 0 32px;
+        text-align: center;
+      }
+
+      .hero-stat + .hero-stat {
+        border-left: 1px solid var(--border);
+      }
+
+      .hero-stat-num {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 28px;
+        color: var(--text);
+      }
+
+      .hero-stat-lbl {
+        margin-top: 4px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+        color: var(--text-3);
+        letter-spacing: 0.08em;
+      }
+
+      /* Section shell */
+      .section {
+        padding: 100px 24px;
+        border-top: 1px solid transparent;
+      }
+
+      /* Demo */
+      #demo.section-demo {
+        background: var(--bg-2);
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .demo-label {
+        text-align: center;
+        margin-bottom: 48px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+      }
+
+      .demo-grid {
+        display: grid;
+        grid-template-columns: 1fr 0.67fr;
+        gap: 40px;
+        align-items: start;
+      }
+
+      .lead-card {
+        background: var(--bg-3);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 20px 24px;
+        margin-bottom: 12px;
+        transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        opacity: 0;
+        transform: translateY(24px);
+      }
+
+      .lead-card:hover {
+        border-color: var(--border-bright);
+        box-shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+      }
+
+      .lead-card.demo-in:nth-child(1) {
+        animation: cardIn 0.5s ease 0.4s forwards;
+      }
+      .lead-card.demo-in:nth-child(2) {
+        animation: cardIn 0.5s ease 0.55s forwards;
+      }
+      .lead-card.demo-in:nth-child(3) {
+        animation: cardIn 0.5s ease 0.7s forwards;
+      }
+
+      @keyframes cardIn {
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      .lead-top {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+      }
+
+      .lead-top-left {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: baseline;
+        gap: 0;
+      }
+
+      .score-wrap {
+        display: inline-flex;
+        align-items: baseline;
+        gap: 6px;
+      }
+
+      .score-num {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 24px;
+      }
+
+      .score-num.high {
+        color: var(--green);
+        text-shadow: 0 0 12px rgba(74, 222, 128, 0.4);
+      }
+      .score-num.mid {
+        color: var(--yellow);
+      }
+      .score-num.low {
+        color: var(--text-3);
+      }
+
+      .score-lbl {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 9px;
+        color: var(--text-3);
+      }
+
+      .sub-pill {
+        margin-left: 12px;
+        display: inline-block;
+        background: var(--bg-2);
+        border: 1px solid var(--border-bright);
+        border-radius: 4px;
+        padding: 3px 10px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        color: var(--text-2);
+      }
+
+      .lead-author {
+        margin-left: 8px;
+        font-size: 12px;
+        color: var(--text-3);
+      }
+
+      .lead-time {
+        font-size: 12px;
+        color: var(--text-3);
+        flex-shrink: 0;
+      }
+
+      .lead-title {
+        margin: 12px 0 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--text);
+        line-height: 1.4;
+      }
+
+      .lead-snippet {
+        margin: 6px 0 0;
+        font-size: 13px;
+        color: var(--text-3);
+        line-height: 1.6;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      .lead-actions {
+        margin-top: 14px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .lead-link {
+        font-size: 12px;
+        color: var(--accent);
+        cursor: default;
+      }
+
+      .btn-draft-sm {
+        font-size: 12px;
+        border: 1px solid var(--border-bright);
+        color: var(--text-2);
+        border-radius: 4px;
+        padding: 4px 12px;
+        background: transparent;
+        cursor: pointer;
+        transition: border-color 0.15s ease, color 0.15s ease;
+      }
+
+      .btn-draft-sm:hover {
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      .draft-expand {
+        margin-top: 14px;
+        padding-top: 14px;
+        border-top: 1px solid var(--border);
+        background: transparent;
+      }
+
+      .draft-label {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        color: var(--accent);
+      }
+
+      .draft-text {
+        margin-top: 8px;
+        font-size: 13px;
+        line-height: 1.7;
+        color: var(--text-2);
+        font-style: italic;
+      }
+
+      .draft-copy {
+        margin-top: 10px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        color: var(--text-3);
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0;
+        transition: color 0.15s ease;
+      }
+
+      .draft-copy:hover {
+        color: var(--accent);
+      }
+
+      .context-panel {
+        position: sticky;
+        top: 80px;
+        background: var(--bg-3);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 28px;
+        opacity: 0;
+        transform: translateY(16px);
+      }
+
+      .context-panel.demo-in-view {
+        animation: cardIn 0.5s ease 0.9s forwards;
+      }
+
+      .ctx-label {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        color: var(--text-3);
+      }
+
+      .ctx-divider {
+        height: 1px;
+        background: var(--border);
+        margin: 16px 0;
+      }
+
+      .ctx-k {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        color: var(--accent);
+        letter-spacing: 0.08em;
+        margin-top: 20px;
+      }
+
+      .ctx-k:first-of-type {
+        margin-top: 0;
+      }
+
+      .ctx-v {
+        margin-top: 6px;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        font-size: 14px;
+        color: var(--text);
+      }
+
+      .ctx-v.mono-val {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 13px;
+        color: var(--accent-2);
+      }
+
+      .scorebar-row {
+        margin-top: 10px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .scorebar-label {
+        flex: 0 0 120px;
+        font-size: 12px;
+        color: var(--text-3);
+      }
+
+      .scorebar-track {
+        flex: 1;
+        height: 4px;
+        border-radius: 2px;
+        background: var(--border);
+        overflow: hidden;
+      }
+
+      .scorebar-fill {
+        display: block;
+        height: 100%;
+        border-radius: 2px;
+        width: 0;
+        background: var(--accent);
+        transition: width 0.8s ease;
+      }
+
+      .scorebar-fill.green {
+        background: var(--green);
+      }
+
+      #demo.demo-bars-in .scorebar-fill {
+        width: var(--target, 0%);
+      }
+
+      .scorebar-pts {
+        flex: 0 0 52px;
+        text-align: right;
+        font-size: 11px;
+        color: var(--text-3);
+        font-family: "IBM Plex Mono", monospace;
+      }
+
+      .ctx-total {
+        margin-top: 16px;
+        text-align: right;
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 20px;
+        color: var(--text);
+      }
+
+      /* Pain / solution */
+      .pain-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: start;
+      }
+
+      .pain-grid h2 {
+        margin: 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 32px;
+        line-height: 1.2;
+        color: var(--text);
+      }
+
+      .pain-grid p {
+        margin: 16px 0 0;
+        font-size: 16px;
+        color: var(--text-3);
+        line-height: 1.8;
+      }
+
+      .contrast-point {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 24px;
+      }
+
+      .contrast-icon {
+        flex-shrink: 0;
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 18px;
+      }
+
+      .contrast-icon.bad {
+        background: rgba(248, 113, 113, 0.1);
+        color: var(--red);
+      }
+
+      .contrast-icon.good {
+        background: rgba(124, 106, 247, 0.15);
+        color: var(--accent);
+      }
+
+      .contrast-title {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 600;
+        font-size: 15px;
+        color: var(--text);
+      }
+
+      .contrast-sub {
+        margin-top: 4px;
+        font-size: 13px;
+        color: var(--text-3);
+        line-height: 1.5;
+      }
+
+      /* How it works */
+      .hiw-head {
+        margin-bottom: 40px;
+      }
+
+      .hiw-head .lbl {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+      }
+
+      .hiw-head h2 {
+        margin: 12px 0 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 42px;
+        color: var(--text);
+      }
+
+      .steps-row {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 20px;
+      }
+
+      .step-card {
+        padding: 32px;
+        background: var(--bg-3);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        transition: border-color 0.2s ease;
+      }
+
+      .step-card:hover {
+        border-color: var(--border-bright);
+      }
+
+      .step-num {
+        font-family: "IBM Plex Mono", monospace;
+        font-weight: 700;
+        font-size: 48px;
+        color: var(--border-bright);
+        margin-bottom: 16px;
+      }
+
+      .step-card h3 {
+        margin: 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 20px;
+        color: var(--text);
+      }
+
+      .step-card p {
+        margin: 10px 0 0;
+        font-size: 13px;
+        color: var(--text-3);
+        line-height: 1.7;
+      }
+
+      /* Features */
+      .feat-head .lbl {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+      }
+
+      .feat-head h2 {
+        margin: 12px 0 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 42px;
+        max-width: 500px;
+        color: var(--text);
+      }
+
+      .feat-grid {
+        margin-top: 40px;
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        overflow: hidden;
+        background: var(--border);
+      }
+
+      .feat-cell {
+        background: var(--bg-2);
+        padding: 32px;
+        border-right: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+      }
+
+      .feat-cell:nth-child(3n) {
+        border-right: none;
+      }
+
+      .feat-cell:nth-last-child(-n + 3) {
+        border-bottom: none;
+      }
+
+      .feat-ico {
+        font-size: 28px;
+        margin-bottom: 16px;
+      }
+
+      .feat-cell h3 {
+        margin: 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 17px;
+        color: var(--text);
+      }
+
+      .feat-cell p {
+        margin: 8px 0 0;
+        font-size: 13px;
+        color: var(--text-3);
+        line-height: 1.6;
+      }
+
+      .pill-soon {
+        margin-top: 8px;
+        display: inline-block;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 9px;
+        background: var(--bg-3);
+        border: 1px solid var(--border-bright);
+        border-radius: 4px;
+        padding: 2px 8px;
+        color: var(--text-3);
+      }
+
+      /* Quote */
+      .quote-section {
+        background: var(--bg-2);
+        border-top: 1px solid var(--border);
+        border-bottom: 1px solid var(--border);
+        padding: 80px 24px;
+      }
+
+      .quote-inner {
+        max-width: 680px;
+        margin: 0 auto;
+        text-align: left;
+      }
+
+      .quote-mark {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 120px;
+        line-height: 0.8;
+        color: var(--border-bright);
+        margin-bottom: -20px;
+      }
+
+      .quote-text {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 500;
+        font-size: 24px;
+        line-height: 1.6;
+        color: var(--text);
+        margin: 0;
+      }
+
+      .quote-by {
+        margin-top: 24px;
+        font-size: 14px;
+        color: var(--text-3);
+      }
+
+      /* Contact */
+      .contact-section {
+        background: var(--bg-3);
+        border-top: 1px solid var(--border);
+        padding: 80px 24px;
+      }
+
+      .contact-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 40px;
+        align-items: start;
+      }
+
+      .contact-left .lbl {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+      }
+
+      .contact-left h2 {
+        margin: 12px 0 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 36px;
+        line-height: 1.2;
+        color: var(--text);
+      }
+
+      .contact-left p {
+        margin: 16px 0 0;
+        font-size: 16px;
+        color: var(--text-3);
+        line-height: 1.7;
+      }
+
+      .contact-card {
+        background: var(--bg);
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        padding: 32px;
+      }
+
+      .contact-card .top-lbl {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 10px;
+        letter-spacing: 0.12em;
+        color: var(--text-3);
+      }
+
+      .contact-email {
+        margin-top: 20px;
+        display: inline-block;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 15px;
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      .contact-email:hover {
+        text-decoration: underline;
+      }
+
+      .contact-list {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .contact-list li {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 13px;
+        color: var(--text-3);
+        margin-bottom: 8px;
+      }
+
+      .contact-note {
+        margin-top: 16px;
+        font-size: 12px;
+        font-style: italic;
+        color: var(--text-3);
+      }
+
+      /* Get started (bottom CTA) */
+      #get-started.get-started-section {
+        background: radial-gradient(
+            ellipse 60% 60% at 50% 100%,
+            rgba(124, 106, 247, 0.1) 0%,
+            transparent 70%
+          ),
+          var(--bg);
+        padding: 100px 24px;
+      }
+
+      .get-started-inner {
+        max-width: 580px;
+        margin: 0 auto;
+        text-align: center;
+      }
+
+      .get-started-inner .lbl {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        letter-spacing: 0.18em;
+        color: var(--accent);
+      }
+
+      .get-started-inner h2 {
+        margin: 12px 0 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 52px;
+        line-height: 1.1;
+        color: var(--text);
+      }
+
+      .get-started-inner .sub {
+        margin-top: 16px;
+        font-size: 17px;
+        color: var(--text-3);
+        line-height: 1.6;
+      }
+
+      .btn-open-signal {
+        margin-top: 40px;
+        display: inline-block;
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 17px;
+        color: #fff;
+        background: var(--accent);
+        border: none;
+        border-radius: 8px;
+        padding: 16px 36px;
+        cursor: pointer;
+        text-decoration: none;
+        box-shadow: 0 0 40px var(--accent-glow-strong);
+        transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+      }
+
+      .btn-open-signal:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 0 56px var(--accent-glow-strong);
+        background: var(--accent-2);
+      }
+
+      .notify-block {
+        margin-top: 32px;
+        text-align: left;
+      }
+
+      .notify-label {
+        margin: 0 0 10px;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+        color: var(--text-3);
+        line-height: 1.5;
+      }
+
+      .notify-form {
+        display: flex;
+        flex-wrap: wrap;
+        max-width: 100%;
+      }
+
+      .notify-input {
+        flex: 1;
+        min-width: 0;
+        font-family: "Space Grotesk", sans-serif;
+        font-size: 14px;
+        padding: 10px 16px;
+        background: var(--bg-2);
+        border: 1px solid var(--border);
+        color: var(--text);
+        border-radius: 8px 0 0 8px;
+        outline: none;
+        transition: border-color 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .notify-input::placeholder {
+        color: var(--text-3);
+      }
+
+      .notify-input:focus {
+        border-color: var(--accent);
+        box-shadow: 0 0 0 3px var(--accent-glow);
+      }
+
+      .notify-input.shake {
+        animation: shake 0.3s ease;
+        border-color: var(--red);
+      }
+
+      @keyframes shake {
+        0%,
+        100% {
+          transform: translateX(0);
+        }
+        25% {
+          transform: translateX(6px);
+        }
+        75% {
+          transform: translateX(-6px);
+        }
+      }
+
+      .notify-submit {
+        font-family: "Space Grotesk", sans-serif;
+        font-weight: 700;
+        font-size: 14px;
+        white-space: nowrap;
+        color: #fff;
+        background: var(--accent);
+        border: none;
+        padding: 10px 18px;
+        border-radius: 0 8px 8px 0;
+        cursor: pointer;
+        transition: background 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .notify-submit:hover {
+        background: var(--accent-2);
+        box-shadow: 0 0 24px var(--accent-glow-strong);
+      }
+
+      .notify-success {
+        text-align: center;
+        opacity: 0;
+        animation: successIn 0.4s ease forwards;
+      }
+
+      @keyframes successIn {
+        to {
+          opacity: 1;
+        }
+      }
+
+      .notify-foot {
+        margin-top: 16px;
+        font-size: 12px;
+        color: var(--text-3);
+        font-family: "IBM Plex Mono", monospace;
+        text-align: center;
+      }
+
+      /* Footer */
+      footer {
+        background: var(--bg-2);
+        border-top: 1px solid var(--border);
+        padding: 32px 24px;
+      }
+
+      .footer-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 16px;
+      }
+
+      .footer-brand {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 13px;
+        color: var(--text-3);
+      }
+
+      .footer-tag {
+        margin-top: 4px;
+        font-size: 12px;
+        color: var(--text-3);
+      }
+
+      .footer-mail {
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 12px;
+        color: var(--text-3);
+        text-decoration: none;
+      }
+
+      .footer-mail:hover {
+        color: var(--accent);
+      }
+
+      .footer-strip {
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--border);
+        text-align: center;
+        font-family: "IBM Plex Mono", monospace;
+        font-size: 11px;
+        color: var(--text-3);
+      }
+
+      /* Scroll reveal */
+      .reveal {
+        opacity: 0;
+        transform: translateY(24px);
+        transition: opacity 0.5s ease, transform 0.5s ease;
+      }
+
+      .reveal.visible {
+        opacity: 1;
+        transform: translateY(0);
+      }
+
+      .reveal-stagger > .reveal:nth-child(1) {
+        transition-delay: 0ms;
+      }
+      .reveal-stagger > .reveal:nth-child(2) {
+        transition-delay: 80ms;
+      }
+      .reveal-stagger > .reveal:nth-child(3) {
+        transition-delay: 160ms;
+      }
+      .reveal-stagger > .reveal:nth-child(4) {
+        transition-delay: 240ms;
+      }
+      .reveal-stagger > .reveal:nth-child(5) {
+        transition-delay: 320ms;
+      }
+      .reveal-stagger > .reveal:nth-child(6) {
+        transition-delay: 400ms;
+      }
+
+      @media (max-width: 768px) {
+        .nav {
+          padding: 0 16px;
+        }
+        .hero h1 {
+          font-size: 36px;
+        }
+        .hero-subline {
+          font-size: 20px;
+        }
+        .hero-stat {
+          padding: 0 16px;
+        }
+        .hero-stats {
+          flex-wrap: wrap;
+          gap: 24px;
+        }
+        .demo-grid {
+          grid-template-columns: 1fr;
+        }
+        .context-panel {
+          position: static;
+        }
+        .pain-grid {
+          grid-template-columns: 1fr;
+        }
+        .steps-row {
+          grid-template-columns: 1fr;
+        }
+        .feat-grid {
+          grid-template-columns: 1fr;
+        }
+        .feat-cell {
+          border-right: none !important;
+        }
+        .feat-cell:not(:last-child) {
+          border-bottom: 1px solid var(--border);
+        }
+        .contact-grid {
+          grid-template-columns: 1fr;
+        }
+        .get-started-inner h2 {
+          font-size: 36px;
+        }
+        .notify-form {
+          flex-direction: column;
+        }
+        .notify-input {
+          border-radius: 8px;
+          width: 100%;
+        }
+        .notify-submit {
+          border-radius: 8px;
+          width: 100%;
+          margin-top: 10px;
+        }
+        .hiw-head h2 {
+          font-size: 32px;
+        }
+        .feat-head h2 {
+          font-size: 32px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="nav">
+      <div class="nav-brand">
+        <span class="nav-logo">SIGNAL</span>
+      </div>
+      <div class="nav-actions">
+        <a class="btn-nav-primary" href="/app" target="_top">Try Signal Free</a>
+      </div>
+    </nav>
+
+    <section class="hero">
+      <div class="hero-inner">
+        <div class="hero-pill">
+          <span class="hero-pill-dot" aria-hidden="true"></span>
+          <span>Live on Reddit · Monitoring 24/7</span>
+        </div>
+        <h1>
+          Stop paying for ads<br />
+          <span class="accent-line">nobody clicks.</span>
+        </h1>
+        <p class="hero-subline">Signal finds the people who already want what you sell.</p>
+        <p class="hero-body">
+          Signal monitors Reddit 24/7 for posts where people are actively asking for a product like
+          yours. You get the post, the context, and an AI-drafted reply — ready to copy and post in
+          30 seconds.
+        </p>
+        <div class="hero-ctas">
+          <a class="btn-hero-primary" href="/app" target="_top">Try Signal Free →</a>
+          <button type="button" class="btn-hero-secondary" data-scroll-to="demo">
+            See how it works ↓
+          </button>
+        </div>
+        <p class="hero-trust">No credit card. No scraping. No spam. Just leads.</p>
+        <div class="hero-stats">
+          <div class="hero-stat">
+            <div class="hero-stat-num">Reddit</div>
+            <div class="hero-stat-lbl">MONITORED PLATFORM</div>
+          </div>
+          <div class="hero-stat">
+            <div class="hero-stat-num">6 hrs</div>
+            <div class="hero-stat-lbl">SCAN FREQUENCY</div>
+          </div>
+          <div class="hero-stat">
+            <div class="hero-stat-num">&lt; 30s</div>
+            <div class="hero-stat-lbl">TO DRAFT A REPLY</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section section-demo" id="demo">
+      <div class="wrap">
+        <p class="demo-label">LIVE FROM SIGNAL</p>
+        <div class="demo-grid">
+          <div>
+            <article class="lead-card demo-in">
+              <div class="lead-top">
+                <div class="lead-top-left">
+                  <span class="score-wrap">
+                    <span class="score-num high">94</span>
+                    <span class="score-lbl mono">SCORE</span>
+                  </span>
+                  <span class="sub-pill mono">r/freelance</span>
+                  <span class="lead-author">u/design_studio_kv</span>
+                </div>
+                <span class="lead-time">2h ago</span>
+              </div>
+              <h3 class="lead-title">
+                Does anyone actually make money from Dribbble or is it just a portfolio graveyard?
+              </h3>
+              <p class="lead-snippet">
+                3 years freelancing and my pipeline completely dried up this quarter. Looking for
+                platforms or strategies that actually send real client leads.
+              </p>
+              <div class="lead-actions">
+                <span class="lead-link">View Post →</span>
+                <button type="button" class="btn-draft-sm">Draft Reply</button>
+              </div>
+              <div class="draft-expand">
+                <div class="draft-label mono">AI DRAFT</div>
+                <p class="draft-text">
+                  Dribbble&apos;s been more portfolio than pipeline for a while now. What&apos;s
+                  actually moved the needle for me is being where clients ask questions —
+                  r/entrepreneur, r/smallbusiness — and just being helpful. I use a tool called Signal
+                  to catch those threads early, which helps a lot.
+                </p>
+                <button type="button" class="draft-copy mono">Copy</button>
+              </div>
+            </article>
+
+            <article class="lead-card demo-in">
+              <div class="lead-top">
+                <div class="lead-top-left">
+                  <span class="score-wrap">
+                    <span class="score-num mid">78</span>
+                    <span class="score-lbl mono">SCORE</span>
+                  </span>
+                  <span class="sub-pill mono">r/smallbusiness</span>
+                  <span class="lead-author">u/bakery_pdx_owner</span>
+                </div>
+                <span class="lead-time">5h ago</span>
+              </div>
+              <h3 class="lead-title">
+                How are small local businesses supposed to compete with DoorDash eating 30% margins?
+              </h3>
+              <p class="lead-snippet">
+                We do $400k/year but delivery platform fees are destroying us. Anyone running their own
+                ordering system successfully without a huge tech budget?
+              </p>
+              <div class="lead-actions">
+                <span class="lead-link">View Post →</span>
+                <button type="button" class="btn-draft-sm">Draft Reply</button>
+              </div>
+            </article>
+
+            <article class="lead-card demo-in">
+              <div class="lead-top">
+                <div class="lead-top-left">
+                  <span class="score-wrap">
+                    <span class="score-num low">61</span>
+                    <span class="score-lbl mono">SCORE</span>
+                  </span>
+                  <span class="sub-pill mono">r/entrepreneur</span>
+                  <span class="lead-author">u/bootstrapped_mike</span>
+                </div>
+                <span class="lead-time">8h ago</span>
+              </div>
+              <h3 class="lead-title">What CRM do you actually use when you&apos;re a team of one?</h3>
+              <p class="lead-snippet">
+                Tried HubSpot — too bloated. Tried Notion — not really a CRM. Just need something that
+                tracks who I talked to and when to follow up.
+              </p>
+              <div class="lead-actions">
+                <span class="lead-link">View Post →</span>
+                <button type="button" class="btn-draft-sm">Draft Reply</button>
+              </div>
+            </article>
+          </div>
+
+          <aside class="context-panel" id="demo-context">
+            <p class="ctx-label">HOW SIGNAL FOUND THIS</p>
+            <p class="ctx-k mono">ACTIVE MONITOR</p>
+            <p class="ctx-v">Freelance lead generation tool</p>
+            <div class="ctx-divider"></div>
+            <p class="ctx-label">QUERY MATCHED</p>
+            <p class="ctx-v mono-val">&quot;freelancer pipeline help&quot;</p>
+            <div class="ctx-divider"></div>
+            <p class="ctx-label">SUBREDDIT</p>
+            <p class="ctx-v mono-val">r/freelance</p>
+            <div class="ctx-divider"></div>
+            <p class="ctx-label">SCORE BREAKDOWN</p>
+            <div class="scorebar-row">
+              <span class="scorebar-label">Pain language</span>
+              <div class="scorebar-track">
+                <span class="scorebar-fill green" style="--target: 80%" data-bar></span>
+              </div>
+              <span class="scorebar-pts">+28</span>
+            </div>
+            <div class="scorebar-row">
+              <span class="scorebar-label">Question signal</span>
+              <div class="scorebar-track">
+                <span class="scorebar-fill" style="--target: 80%" data-bar></span>
+              </div>
+              <span class="scorebar-pts">+20</span>
+            </div>
+            <div class="scorebar-row">
+              <span class="scorebar-label">Keyword match</span>
+              <div class="scorebar-track">
+                <span class="scorebar-fill" style="--target: 60%" data-bar></span>
+              </div>
+              <span class="scorebar-pts">+18</span>
+            </div>
+            <div class="scorebar-row">
+              <span class="scorebar-label">Recency (2h)</span>
+              <div class="scorebar-track">
+                <span class="scorebar-fill" style="--target: 100%" data-bar></span>
+              </div>
+              <span class="scorebar-pts">+20</span>
+            </div>
+            <p class="ctx-total mono">94 / 100</p>
+          </aside>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap pain-grid">
+        <div class="reveal" data-reveal>
+          <h2>You know your customers are out there talking about this problem.</h2>
+          <p>
+            Every day, hundreds of people post on Reddit asking for exactly what you sell. They
+            describe the pain. They ask for recommendations. They&apos;re ready to buy. And
+            they&apos;ve never heard of you.
+          </p>
+          <p>
+            You could spend two hours searching Reddit manually. Or you could run Facebook ads to
+            people who didn&apos;t ask for anything. Or you could use Signal.
+          </p>
+        </div>
+        <div class="reveal" data-reveal>
+          <div class="contrast-point">
+            <div class="contrast-icon bad">✕</div>
+            <div>
+              <div class="contrast-title">Facebook Ads</div>
+              <div class="contrast-sub">
+                Interrupting people who didn&apos;t ask. $3-8 CPC. Hope they remember you.
+              </div>
+            </div>
+          </div>
+          <div class="contrast-point">
+            <div class="contrast-icon bad">✕</div>
+            <div>
+              <div class="contrast-title">Cold Outreach</div>
+              <div class="contrast-sub">2% reply rate on a good day. Feels gross. Scales poorly.</div>
+            </div>
+          </div>
+          <div class="contrast-point">
+            <div class="contrast-icon good">✓</div>
+            <div>
+              <div class="contrast-title">Signal</div>
+              <div class="contrast-sub">
+                People who are actively asking for what you sell. Real intent. Zero ad spend.
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" style="background: var(--bg-2); border-top: 1px solid var(--border)" id="how-it-works">
+      <div class="wrap">
+        <div class="hiw-head reveal" data-reveal>
+          <p class="lbl mono">HOW IT WORKS</p>
+          <h2>Three steps. Thirty seconds each.</h2>
+        </div>
+        <div class="steps-row reveal-stagger">
+          <div class="step-card reveal" data-reveal>
+            <div class="step-num mono">01</div>
+            <h3>Describe your product</h3>
+            <p>
+              Tell Signal what you sell and how you&apos;d naturally mention it in a Reddit comment.
+              Takes 60 seconds. No jargon required.
+            </p>
+          </div>
+          <div class="step-card reveal" data-reveal>
+            <div class="step-num mono">02</div>
+            <h3>Signal scans Reddit</h3>
+            <p>
+              Signal generates smart search queries, targets relevant subreddits, and surfaces posts
+              where real people are expressing the exact problem you solve. Every 6 hours,
+              automatically.
+            </p>
+          </div>
+          <div class="step-card reveal" data-reveal>
+            <div class="step-num mono">03</div>
+            <h3>Reply and convert</h3>
+            <p>
+              Each lead shows the post, the score, and an AI-drafted reply. Copy it, tweak one
+              sentence, paste it into Reddit. The whole thing takes 30 seconds.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="wrap">
+        <div class="feat-head reveal" data-reveal>
+          <p class="lbl mono">WHAT YOU GET</p>
+          <h2>Everything you need. Nothing you don&apos;t.</h2>
+        </div>
+        <div class="feat-grid reveal-stagger">
+          <div class="feat-cell reveal" data-reveal>
+            <div class="feat-ico">⚡</div>
+            <h3>Intent scoring</h3>
+            <p>
+              Every post is scored 0-100 based on pain language, question signals, keyword match, and
+              recency. High scores first, always.
+            </p>
+          </div>
+          <div class="feat-cell reveal" data-reveal>
+            <div class="feat-ico">🎯</div>
+            <h3>Smart query generation</h3>
+            <p>
+              You describe your product in plain English. Signal generates 8-10 targeted search
+              queries across the subreddits most likely to contain your customers.
+            </p>
+          </div>
+          <div class="feat-cell reveal" data-reveal>
+            <div class="feat-ico">✍️</div>
+            <h3>AI draft replies</h3>
+            <p>
+              Each lead comes with a human-sounding reply you can copy and post. Sounds like a real
+              person, not an ad. Mentions your product naturally.
+            </p>
+          </div>
+          <div class="feat-cell reveal" data-reveal>
+            <div class="feat-ico">🔄</div>
+            <h3>Automatic scanning</h3>
+            <p>
+              Set it and forget it. Signal scans every 6 hours and surfaces new leads without you
+              lifting a finger. New leads appear in your dashboard.
+            </p>
+          </div>
+          <div class="feat-cell reveal" data-reveal>
+            <div class="feat-ico">📊</div>
+            <h3>Three monitors</h3>
+            <p>
+              Track up to three products or angles simultaneously. Each monitor has its own lead feed,
+              queries, and scan schedule.
+            </p>
+          </div>
+          <div class="feat-cell reveal" data-reveal>
+            <div class="feat-ico">🔔</div>
+            <h3>Email digest (coming soon)</h3>
+            <p>
+              Get your top leads delivered to your inbox every morning. No need to check the dashboard
+              — Signal brings the leads to you.
+            </p>
+            <span class="pill-soon mono">COMING SOON</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="quote-section">
+      <div class="quote-inner reveal" data-reveal>
+        <span class="quote-mark mono">&#8220;</span>
+        <p class="quote-text">
+          I spent $800 on Facebook ads last month and got 2 leads. First week with Signal I replied
+          to 6 posts and closed 2 of them. The difference is intent — these people are already
+          looking.
+        </p>
+        <p class="quote-by">— Solo SaaS founder, running 3 monitors</p>
+      </div>
+    </section>
+
+    <section class="contact-section">
+      <div class="wrap contact-grid">
+        <div class="contact-left reveal" data-reveal>
+          <p class="lbl mono">NEED MORE?</p>
+          <h2>Need more than the defaults?</h2>
+          <p>
+            We&apos;re keeping Signal focused: three monitors per account, scans every six hours. If
+            you&apos;re building something serious and need more — more monitors, custom scan
+            intervals, or platforms we haven&apos;t shipped yet — reach out directly.
+          </p>
+          <p>No sales team. No demo call. Just a founder who&apos;ll actually respond.</p>
+        </div>
+        <div class="contact-card reveal" data-reveal>
+          <p class="top-lbl mono">REACH OUT</p>
+          <a
+            class="contact-email"
+            href="mailto:dev@pranaaviyer.com?subject=Signal%20%E2%80%94%20I%20need%20more%20monitors&body=Hi%20Pranav%2C%20I'm%20using%20Signal%20and%20would%20love%20to%20discuss%20more%20monitors%20or%20custom%20features.%20Here's%20what%20I'm%20building%3A%20"
+            >dev@pranaaviyer.com</a
+          >
+          <div class="ctx-divider"></div>
+          <ul class="contact-list">
+            <li>→ Need more than 3 monitors</li>
+            <li>→ Want priority scanning (every 1-2h)</li>
+            <li>→ Interested in other platforms (Twitter, HN, IndieHackers)</li>
+          </ul>
+          <div class="ctx-divider"></div>
+          <p class="contact-note">Replies within 24 hours.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section get-started-section" id="get-started">
+      <div class="get-started-inner">
+        <p class="lbl mono reveal" data-reveal>GET STARTED</p>
+        <h2 class="reveal" data-reveal>Find your first lead today.</h2>
+        <p class="sub reveal" data-reveal>
+          Signal is free to use. Set up a monitor in 60 seconds and see who on Reddit is already
+          asking for what you sell.
+        </p>
+        <a class="btn-open-signal reveal" data-reveal href="/app" target="_top">Open Signal — It&apos;s Free</a>
+        <div class="notify-block reveal" data-reveal>
+          <p class="notify-label">
+            Get notified when we add YouTube, Twitter + email digests:
+          </p>
+          <form class="notify-form" id="notify-form" novalidate>
+            <input
+              class="notify-input"
+              type="email"
+              id="notify-email"
+              name="email"
+              placeholder="your@email.com"
+              autocomplete="email"
+              required
+            />
+            <button type="submit" class="notify-submit">Notify Me</button>
+          </form>
+        </div>
+        <p class="notify-foot" id="notify-foot">
+          No spam. Unsubscribe anytime. Built by a solo founder.
+        </p>
+      </div>
+    </section>
+
+    <footer>
+      <div class="wrap">
+        <div class="footer-row">
+          <div>
+            <div class="footer-brand mono">SIGNAL</div>
+            <div class="footer-tag">Lead intelligence for founders who ship.</div>
+          </div>
+          <a class="footer-mail" href="mailto:dev@pranaaviyer.com">dev@pranaaviyer.com</a>
+        </div>
+        <div class="footer-strip mono">
+          Built with Reddit API + OpenAI · Not affiliated with Reddit, Inc.
+        </div>
+      </div>
+    </footer>
+
+    <script>
+      (function () {
+        document.querySelectorAll("[data-scroll-to]").forEach(function (el) {
+          el.addEventListener("click", function () {
+            var id = el.getAttribute("data-scroll-to");
+            var t = document.getElementById(id);
+            if (t) t.scrollIntoView({ behavior: "smooth", block: "start" });
+          });
+        });
+
+        var revealEls = document.querySelectorAll("[data-reveal]");
+        if ("IntersectionObserver" in window) {
+          var io = new IntersectionObserver(
+            function (entries) {
+              entries.forEach(function (entry) {
+                if (entry.isIntersecting) {
+                  entry.target.classList.add("visible");
+                }
+              });
+            },
+            { threshold: 0.2, rootMargin: "0px 0px -5% 0px" }
+          );
+          revealEls.forEach(function (el) {
+            io.observe(el);
+          });
+        } else {
+          revealEls.forEach(function (el) {
+            el.classList.add("visible");
+          });
+        }
+
+        var demo = document.getElementById("demo");
+        var barSectionFired = false;
+        if (demo && "IntersectionObserver" in window) {
+          var demoIo = new IntersectionObserver(
+            function (entries) {
+              entries.forEach(function (entry) {
+                if (entry.isIntersecting && !barSectionFired) {
+                  barSectionFired = true;
+                  demo.classList.add("demo-bars-in");
+                  var bars = demo.querySelectorAll("[data-bar]");
+                  bars.forEach(function (bar, i) {
+                    bar.style.transitionDelay = i * 100 + "ms";
+                  });
+                  var ctx = document.getElementById("demo-context");
+                  if (ctx) ctx.classList.add("demo-in-view");
+                }
+              });
+            },
+            { threshold: 0.15 }
+          );
+          demoIo.observe(demo);
+        }
+
+        var form = document.getElementById("notify-form");
+        var input = document.getElementById("notify-email");
+        var foot = document.getElementById("notify-foot");
+
+        if (form && input) {
+          form.addEventListener("submit", function (e) {
+            e.preventDefault();
+            var v = (input.value || "").trim();
+            var ok = v.indexOf("@") > 0 && v.indexOf(".", v.indexOf("@")) > v.indexOf("@");
+            if (!ok) {
+              input.classList.remove("shake");
+              void input.offsetWidth;
+              input.classList.add("shake");
+              return;
+            }
+            input.classList.remove("shake");
+            var wrap = document.createElement("div");
+            wrap.className = "notify-success";
+            wrap.innerHTML =
+              '<div style="font-size:48px;color:var(--green);line-height:1">✓</div>' +
+              '<p style="margin:16px 0 0;font-family:&quot;Space Grotesk&quot;,sans-serif;font-weight:700;font-size:24px;color:var(--text)">You\'re subscribed.</p>' +
+              '<p style="margin:8px 0 0;font-size:14px;color:var(--text-3)">We\'ll email you when we add YouTube, Twitter, and email digests.</p>';
+            form.replaceWith(wrap);
+            if (foot) foot.textContent = "No spam. Unsubscribe anytime. Built by a solo founder.";
+          });
+        }
+      })();
+    </script>
+    <!-- TODO: Update app accent color from teal #6ee7b7 to violet #7c6af7 to match landing page -->
+  </body>
+</html>

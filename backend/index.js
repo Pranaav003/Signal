@@ -11,8 +11,10 @@ const apiRouter = require('./src/routes');
 const usersRouter = require('./src/routes/users');
 const keywordSetsRouter = require('./src/routes/keywordSets');
 const leadsRouter = require('./src/routes/leads');
+const trackedRepliesRouter = require('./src/routes/trackedReplies');
 
 const { startScheduler } = require('./src/jobs/scheduler');
+const { startTrackerScheduler } = require('./src/jobs/trackerJob');
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -46,6 +48,7 @@ app.use('/api', apiRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/keyword-sets', keywordSetsRouter);
 app.use('/api/leads', leadsRouter);
+app.use('/api/tracked-replies', trackedRepliesRouter);
 
 app.use((err, req, res, _next) => {
   console.error(err && err.message ? err.message : err)
@@ -58,6 +61,13 @@ app.listen(port, () => {
   startScheduler().catch((err) => {
     console.error(
       'Scheduler bootstrap failed:',
+      err && err.message ? err.message : err
+    );
+  });
+
+  startTrackerScheduler().catch((err) => {
+    console.error(
+      'Reply tracker scheduler failed:',
       err && err.message ? err.message : err
     );
   });

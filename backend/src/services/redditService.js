@@ -183,6 +183,7 @@ async function searchSubreddit(subreddit, query) {
 }
 
 module.exports = {
+  getAccessToken,
   searchReddit,
   searchSubreddit,
 };

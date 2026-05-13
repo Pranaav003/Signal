@@ -10,7 +10,7 @@ Reddit lead intelligence for small businesses.
 ./scripts/local-up.sh
 ```
 
-This starts Redis + Postgres (if installed via Homebrew), runs migrations, then launches **API + worker + Vite** in one terminal (`Ctrl+C` stops all three).
+This starts Redis + Postgres (if installed via Homebrew), runs migrations, then launches **API + Vite** in one terminal (`Ctrl+C` stops both). Bull workers run inside the API process unless you set `SKIP_SCAN_WORKER` / `SKIP_TRACKER_WORKER` and use `node src/jobs/worker.js` separately.
 
 From the repository root (after `git clone`, the folder is usually `Signal` or `signal`):
 

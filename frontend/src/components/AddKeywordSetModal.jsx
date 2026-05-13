@@ -64,7 +64,7 @@ export default function AddKeywordSetModal({
           padding: '32px',
           width: '100%',
           maxWidth: '480px',
-          boxShadow: '0 0 0 1px rgba(110,231,183,0.08), 0 18px 50px rgba(0,0,0,0.55)',
+          boxShadow: '0 0 0 1px rgba(124,106,247,0.08), 0 18px 50px rgba(0,0,0,0.55)',
         }}
         role="dialog"
         aria-modal="true"

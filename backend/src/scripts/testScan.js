@@ -8,7 +8,7 @@ const PRODUCT = 'project management tool for remote teams'
 
 async function main() {
   const keywordSetLike = { product_description: PRODUCT }
-  const { queries, subreddits } = generateQueries(PRODUCT)
+  const { queries, subreddits } = await generateQueries(PRODUCT)
 
   const collected = []
 
