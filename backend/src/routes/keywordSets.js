@@ -2,7 +2,7 @@ const express = require('express');
 
 const pool = require('../db/connection');
 const { generateQueries } = require('../services/keywordProcessor');
-const { addScanJob } = require('../jobs/scanJob');
+const { addScanJob, rescheduleRepeatableScanForKeywordSet } = require('../jobs/scanJob');
 const { generateExamplePost } = require('../services/draftService');
 
 const router = express.Router();
@@ -265,7 +265,7 @@ router.delete('/:id', async (req, res) => {
 });
 
 router.patch('/:id', async (req, res) => {
-  const { product_description } = req.body ?? {};
+  const { product_description, scan_interval_hours, pitch_line } = req.body ?? {};
 
   if (!product_description || typeof product_description !== 'string') {
     return res.status(400).json({ error: 'product_description is required' });
@@ -282,22 +282,49 @@ router.patch('/:id', async (req, res) => {
   }
 
   try {
-    const { rows: found } = await pool.query(
-      `SELECT id FROM keyword_sets WHERE id = $1 AND active = true`,
+    const { rows: existingRows } = await pool.query(
+      `SELECT * FROM keyword_sets WHERE id = $1 AND active = true`,
       [req.params.id]
     );
 
-    if (!found.length) {
+    if (!existingRows.length) {
       return res.status(404).json({ error: 'Keyword set not found' });
     }
 
-    const {
-      queries,
-      subreddits,
-      reddit_fit = 'good',
-      warning,
-      suggestion,
-    } = await generateQueries(desc);
+    const existing = existingRows[0];
+    const prevDesc = String(existing.product_description || '').trim();
+    const descChanged = desc !== prevDesc;
+
+    let scanHours = Number(existing.scan_interval_hours) || 6;
+    if (scan_interval_hours !== undefined && scan_interval_hours !== null) {
+      const hours = parseInt(String(scan_interval_hours), 10);
+      scanHours = [6, 12, 24].includes(hours) ? hours : 6;
+    }
+
+    let pitch = existing.pitch_line ?? null;
+    if (pitch_line !== undefined) {
+      if (pitch_line === null || pitch_line === '') {
+        pitch = null;
+      } else if (typeof pitch_line === 'string') {
+        const t = pitch_line.trim();
+        pitch = t ? t : null;
+      }
+    }
+
+    let queries = existing.queries;
+    let subreddits = existing.subreddits;
+    let reddit_fit = existing.reddit_fit ?? 'good';
+    let warning = existing.fit_warning ?? null;
+    let suggestion = existing.fit_suggestion ?? null;
+
+    if (descChanged) {
+      const generated = await generateQueries(desc);
+      queries = generated.queries;
+      subreddits = generated.subreddits;
+      reddit_fit = generated.reddit_fit ?? 'good';
+      warning = generated.warning ?? null;
+      suggestion = generated.suggestion ?? null;
+    }
 
     const { rows } = await pool.query(
       `UPDATE keyword_sets
@@ -306,17 +333,37 @@ router.patch('/:id', async (req, res) => {
            subreddits = $4,
            reddit_fit = $5,
            fit_warning = $6,
-           fit_suggestion = $7
+           fit_suggestion = $7,
+           scan_interval_hours = $8,
+           pitch_line = $9
        WHERE id = $1 AND active = true
        RETURNING *`,
-      [req.params.id, desc, queries, subreddits, reddit_fit, warning, suggestion]
+      [
+        req.params.id,
+        desc,
+        queries,
+        subreddits,
+        reddit_fit,
+        warning,
+        suggestion,
+        scanHours,
+        pitch,
+      ]
     );
 
     if (!rows.length) {
       return res.status(404).json({ error: 'Keyword set not found' });
     }
 
-    await addScanJob(rows[0].id, rows[0].user_id);
+    try {
+      await rescheduleRepeatableScanForKeywordSet(req.params.id);
+    } catch (schedErr) {
+      console.error('[keywordSets] reschedule repeat after PATCH', schedErr);
+    }
+
+    if (descChanged) {
+      await addScanJob(rows[0].id);
+    }
 
     return res.json({
       ...rows[0],

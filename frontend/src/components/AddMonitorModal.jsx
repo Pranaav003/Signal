@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api } from '../lib/api'
 
@@ -12,6 +12,8 @@ const MAX_CHARS = 240
  *   onMonitorLimitReached?: () => void,
  *   onDraftDeactivated?: () => void,
  *   userId: string | null,
+ *   editKeywordSet?: { id: string; product_description?: string; pitch_line?: string | null; scan_interval_hours?: number } | null,
+ *   onSyncList?: () => void | Promise<void>,
  * }} props
  */
 export default function AddMonitorModal({
@@ -21,6 +23,8 @@ export default function AddMonitorModal({
   onMonitorLimitReached,
   onDraftDeactivated,
   userId,
+  editKeywordSet = null,
+  onSyncList,
 }) {
   const [description, setDescription] = useState('')
   const [pitchLine, setPitchLine] = useState('')
@@ -30,9 +34,13 @@ export default function AddMonitorModal({
   const [submitLoading, setSubmitLoading] = useState(false)
   const [submitError, setSubmitError] = useState('')
   const [previewError, setPreviewError] = useState('')
+  const editBaselineRef = useRef(null)
+
+  const isEditMode = Boolean(editKeywordSet?.id)
 
   useEffect(() => {
     if (!isOpen) {
+      editBaselineRef.current = null
       setDescription('')
       setPitchLine('')
       setPreview(null)
@@ -41,8 +49,42 @@ export default function AddMonitorModal({
       setSubmitLoading(false)
       setSubmitError('')
       setPreviewError('')
+      return
     }
-  }, [isOpen])
+
+    if (editKeywordSet?.id) {
+      const hours = Number(editKeywordSet.scan_interval_hours)
+      const scanH = [6, 12, 24].includes(hours) ? hours : 6
+      const pitch =
+        editKeywordSet.pitch_line == null || editKeywordSet.pitch_line === ''
+          ? null
+          : String(editKeywordSet.pitch_line).trim()
+
+      editBaselineRef.current = {
+        product_description: String(editKeywordSet.product_description || '').trim(),
+        scan_interval_hours: scanH,
+        pitch_line: pitch,
+      }
+
+      setDescription(String(editKeywordSet.product_description || '').slice(0, MAX_CHARS))
+      setPitchLine(pitch ? String(editKeywordSet.pitch_line) : '')
+      setScanIntervalHours(scanH)
+      setPreview(null)
+      setPreviewLoading(false)
+      setSubmitError('')
+      setPreviewError('')
+      return
+    }
+
+    editBaselineRef.current = null
+    setDescription('')
+    setPitchLine('')
+    setPreview(null)
+    setPreviewLoading(false)
+    setScanIntervalHours(6)
+    setSubmitError('')
+    setPreviewError('')
+  }, [isOpen, editKeywordSet])
 
   useEffect(() => {
     if (!isOpen) return undefined
@@ -57,7 +99,7 @@ export default function AddMonitorModal({
 
   const trimmed = description.slice(0, MAX_CHARS).trim()
   const len = description.length
-  const showExtended = trimmed.length >= 20
+  const showAdvanced = isEditMode || trimmed.length >= 20
 
   const handleOverlayMouseDown = useCallback(
     (e) => {
@@ -96,6 +138,68 @@ export default function AddMonitorModal({
     }
   }
 
+  async function revertEditBaseline() {
+    const id = editKeywordSet?.id
+    const b = editBaselineRef.current
+    if (!id || !b) return
+
+    await api.patch(`/api/keyword-sets/${id}`, {
+      product_description: b.product_description,
+      scan_interval_hours: b.scan_interval_hours,
+      pitch_line: b.pitch_line,
+    })
+
+    setDescription(String(b.product_description || '').slice(0, MAX_CHARS))
+    setPitchLine(b.pitch_line ? String(b.pitch_line) : '')
+    setScanIntervalHours(b.scan_interval_hours)
+  }
+
+  async function handleSaveEdit() {
+    if (!editKeywordSet?.id || !trimmed) {
+      setSubmitError(!trimmed ? 'Describe your product first.' : 'Missing monitor.')
+      return
+    }
+
+    setSubmitLoading(true)
+    setSubmitError('')
+
+    try {
+      const body = {
+        product_description: trimmed,
+        scan_interval_hours: scanIntervalHours,
+        pitch_line: pitchLine.trim() ? pitchLine.trim() : null,
+      }
+
+      const { data: updated } = await api.patch(`/api/keyword-sets/${editKeywordSet.id}`, body)
+
+      if (updated?.fit_warning) {
+        const suggestionText = updated.fit_suggestion || updated.suggestion || ''
+        const suggestionBlock = suggestionText ? `Suggestion: ${suggestionText}\n\n` : ''
+        const proceed = window.confirm(
+          `⚠️ Reddit fit warning: ${updated.fit_warning}\n\n` +
+            suggestionBlock +
+            'Keep these changes anyway?'
+        )
+        if (!proceed) {
+          await revertEditBaseline()
+          await onSyncList?.()
+          return
+        }
+      }
+
+      await Promise.resolve(onSuccess?.(updated))
+    } catch (err) {
+      const msg =
+        err?.response?.data?.error ||
+        err?.response?.data?.message ||
+        err?.message ||
+        'Something went wrong.'
+      setSubmitError(typeof msg === 'string' ? msg : 'Something went wrong.')
+    } finally {
+      setSubmitLoading(false)
+    }
+  }
+
   async function handleStartMonitoring() {
     if (!userId || !trimmed) {
       setSubmitError(!userId ? 'Not signed in.' : 'Describe your product first.')
@@ -118,11 +222,8 @@ export default function AddMonitorModal({
       const { data: created } = await api.post('/api/keyword-sets', body)
 
       if (created?.fit_warning) {
-        const suggestionText =
-          created.fit_suggestion || created.suggestion || ''
-        const suggestionBlock = suggestionText
-          ? `Suggestion: ${suggestionText}\n\n`
-          : ''
+        const suggestionText = created.fit_suggestion || created.suggestion || ''
+        const suggestionBlock = suggestionText ? `Suggestion: ${suggestionText}\n\n` : ''
         const proceed = window.confirm(
           `⚠️ Reddit fit warning: ${created.fit_warning}\n\n` +
             suggestionBlock +
@@ -163,7 +264,17 @@ export default function AddMonitorModal({
     }
   }
 
+  async function handlePrimaryAction() {
+    if (isEditMode) {
+      await handleSaveEdit()
+    } else {
+      await handleStartMonitoring()
+    }
+  }
+
   if (!isOpen) return null
+
+  const titleId = isEditMode ? 'edit-monitor-title' : 'add-monitor-title'
 
   return (
     <div
@@ -185,7 +296,7 @@ export default function AddMonitorModal({
         }}
         role="dialog"
         aria-modal="true"
-        aria-labelledby="add-monitor-title"
+        aria-labelledby={titleId}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <button
@@ -205,15 +316,13 @@ export default function AddMonitorModal({
         </button>
 
         <header className="pr-10">
-          <h2
-            id="add-monitor-title"
-            className="font-mono"
-            style={{ fontSize: '18px', color: 'var(--text)' }}
-          >
-            New Monitor
+          <h2 id={titleId} className="font-mono" style={{ fontSize: '18px', color: 'var(--text)' }}>
+            {isEditMode ? 'Edit monitor' : 'New Monitor'}
           </h2>
           <p className="mt-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
-            Describe what you sell. Signal finds people who need it.
+            {isEditMode
+              ? 'Update the description, how often Signal scans, and how you’d naturally mention your product in a thread.'
+              : 'Describe what you sell. Signal finds people who need it.'}
           </p>
         </header>
 
@@ -289,7 +398,7 @@ export default function AddMonitorModal({
           />
         </div>
 
-        {showExtended && (
+        {showAdvanced && (
           <div className="add-monitor-preview-reveal mt-6">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span
@@ -392,7 +501,8 @@ export default function AddMonitorModal({
                   className="mt-3 text-[11px] italic"
                   style={{ color: 'var(--text-muted)' }}
                 >
-                  Signal scans Reddit every 6 hours and surfaces real posts like this one.
+                  Signal scans Reddit on your schedule ({scanIntervalHours}h) and surfaces real posts
+                  like this one.
                 </p>
               </>
             )}
@@ -462,15 +572,21 @@ export default function AddMonitorModal({
             style={{
               background: 'var(--accent)',
               color: '#000',
-              cursor: submitLoading || !userId ? 'not-allowed' : 'pointer',
-              opacity: !userId ? 0.55 : 1,
+              cursor: submitLoading || (!isEditMode && !userId) ? 'not-allowed' : 'pointer',
+              opacity: !isEditMode && !userId ? 0.55 : 1,
             }}
-            disabled={submitLoading || !trimmed || !userId}
+            disabled={submitLoading || !trimmed || (!isEditMode && !userId)}
             onClick={() => {
-              void handleStartMonitoring()
+              void handlePrimaryAction()
             }}
           >
-            {submitLoading ? 'Setting up...' : 'Start Monitoring'}
+            {submitLoading
+              ? isEditMode
+                ? 'Saving…'
+                : 'Setting up...'
+              : isEditMode
+                ? 'Save changes'
+                : 'Start Monitoring'}
           </button>
         </div>
 

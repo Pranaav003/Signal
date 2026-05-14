@@ -93,5 +93,18 @@ export function useKeywordSets(userId) {
     [refresh]
   )
 
-  return { keywordSets, loading, createKeywordSet, deleteKeywordSet, refresh }
+  const updateKeywordSet = useCallback(async (id, payload) => {
+    const { data } = await api.patch(`/api/keyword-sets/${id}`, payload)
+    await refresh()
+    return data
+  }, [refresh])
+
+  return {
+    keywordSets,
+    loading,
+    createKeywordSet,
+    deleteKeywordSet,
+    updateKeywordSet,
+    refresh,
+  }
 }

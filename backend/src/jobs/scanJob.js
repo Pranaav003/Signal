@@ -12,6 +12,46 @@ function addScanJob(keywordSetId) {
   return scanQueue.add({ keywordSetId }, { attempts: 3, backoff: 5000 });
 }
 
+/**
+ * Re-register this monitor's Bull repeatable scan job using `scan_interval_hours` from the DB.
+ * Call after PATCH when the interval may have changed (safe to call if unchanged).
+ */
+async function rescheduleRepeatableScanForKeywordSet(keywordSetId) {
+  const { rows } = await pool.query(
+    `SELECT id, user_id, COALESCE(scan_interval_hours, 6) AS scan_interval_hours
+     FROM keyword_sets
+     WHERE id = $1 AND active = true`,
+    [keywordSetId]
+  );
+
+  if (!rows.length || !rows[0].user_id) {
+    return;
+  }
+
+  const ks = rows[0];
+  const hours = Number(ks.scan_interval_hours) || 6;
+  const every = Math.max(hours, 1) * 3600 * 1000;
+  const jobIdStr = `scan-${keywordSetId}`;
+
+  const repeatable = await scanQueue.getRepeatableJobs();
+  for (const rj of repeatable) {
+    if (rj.id === jobIdStr) {
+      await scanQueue.removeRepeatableByKey(rj.key);
+      break;
+    }
+  }
+
+  await scanQueue.add(
+    { keywordSetId: ks.id, userId: ks.user_id },
+    {
+      repeat: { every },
+      jobId: jobIdStr,
+      attempts: 3,
+      backoff: { type: 'exponential', delay: 5000 },
+    }
+  );
+}
+
 function initWorker() {
   scanQueue.process(1, async (job) => {
     const { keywordSetId } = job.data;
@@ -133,5 +173,6 @@ function initWorker() {
 module.exports = {
   scanQueue,
   addScanJob,
+  rescheduleRepeatableScanForKeywordSet,
   initWorker,
 };

@@ -18,6 +18,7 @@ export default function Dashboard() {
     keywordSets,
     loading: setsLoading,
     refresh: refetchKeywordSets,
+    deleteKeywordSet,
   } = useKeywordSets(userId)
 
   const {
@@ -34,7 +35,13 @@ export default function Dashboard() {
 
   const [showMonitorModal, setShowMonitorModal] = useState(false)
   const [showLimitModal, setShowLimitModal] = useState(false)
+  const [monitorToEdit, setMonitorToEdit] = useState(null)
   const [mainView, setMainView] = useState('leads')
+
+  const closeMonitorModal = () => {
+    setShowMonitorModal(false)
+    setMonitorToEdit(null)
+  }
 
   const activeKeywordSets = useMemo(
     () => keywordSets.filter((k) => k.active !== false),
@@ -129,6 +136,7 @@ export default function Dashboard() {
             if (activeKeywordSets.length >= 3) {
               setShowLimitModal(true)
             } else {
+              setMonitorToEdit(null)
               setShowMonitorModal(true)
             }
           }}
@@ -136,12 +144,24 @@ export default function Dashboard() {
           New Monitor
         </button>
 
-        <p
-          className="mb-2 mt-8 font-mono text-[11px]"
-          style={{ color: 'var(--muted)', letterSpacing: '0.24em' }}
-        >
-          MONITORS
-        </p>
+        <div className="mb-2 mt-8 flex items-baseline justify-between gap-2 pr-1">
+          <p
+            className="m-0 font-mono text-[11px]"
+            style={{ color: 'var(--muted)', letterSpacing: '0.24em' }}
+          >
+            MONITORS
+          </p>
+          <span
+            className="font-mono text-[11px] tabular-nums tracking-wide"
+            style={{
+              color:
+                activeKeywordSets.length >= 3 ? 'var(--accent)' : 'var(--text-3)',
+            }}
+            aria-label={`${activeKeywordSets.length} of 3 monitors in use`}
+          >
+            {activeKeywordSets.length}/3
+          </span>
+        </div>
 
         <div className="flex-1 space-y-1 overflow-y-auto pr-2">
           {activeKeywordSets.map((ks) => (
@@ -154,6 +174,14 @@ export default function Dashboard() {
                 setSelectedKeywordSetId(id)
                 setMainView('leads')
               }}
+              onEditMonitor={(id) => {
+                const row = activeKeywordSets.find((k) => k.id === id)
+                if (row) {
+                  setMonitorToEdit(row)
+                  setShowMonitorModal(true)
+                }
+              }}
+              onDelete={deleteKeywordSet}
             />
           ))}
 
@@ -269,14 +297,16 @@ export default function Dashboard() {
 
       <AddMonitorModal
         isOpen={showMonitorModal}
-        onClose={() => setShowMonitorModal(false)}
+        onClose={closeMonitorModal}
         userId={userId}
+        editKeywordSet={monitorToEdit}
+        onSyncList={refetchKeywordSets}
         onMonitorLimitReached={() => setShowLimitModal(true)}
-        onSuccess={async (created) => {
+        onSuccess={async (result) => {
           await refetchKeywordSets()
           await refreshLeads()
-          if (created?.id) setSelectedKeywordSetId(created.id)
-          setShowMonitorModal(false)
+          if (result?.id) setSelectedKeywordSetId(result.id)
+          closeMonitorModal()
         }}
       />
 
