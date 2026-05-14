@@ -77,11 +77,12 @@ services:
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
+      # Web services expose public URL via RENDER_EXTERNAL_URL (not a fromService `property`).
       - key: VITE_API_URL
         fromService:
           name: signal-backend
           type: web
-          property: url
+          envVarKey: RENDER_EXTERNAL_URL
 
 databases:
   - name: signal-db

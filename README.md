@@ -111,4 +111,4 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 | OPENAI_MODEL | Optional; default `gpt-4o-mini` |
 | JWT_SECRET | Random string; auto-generated on Render for the web service |
 
-For the **static frontend** build, **`VITE_API_URL`** is wired from the **`signal-backend`** service URL in **`render.yaml`**.
+For the **static frontend** build, **`VITE_API_URL`** is set from the backend’s **`RENDER_EXTERNAL_URL`** (via Blueprint `fromService` / `envVarKey`) so the browser calls the correct `https://…onrender.com` API.
