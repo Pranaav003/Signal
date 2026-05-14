@@ -85,7 +85,7 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 2. Go to **render.com → New → Blueprint**.
 3. Point Render at the **repo root** (it will pick up **`render.yaml`**).
 4. **Blueprint file:** Redis-compatible storage is a **`type: keyvalue`** service (`signal-redis`), not a legacy root-level `redis:` block. `fromService` references include the required **`type`** (`keyvalue` or `web`).
-5. **Costs:** `signal-worker` uses **`plan: starter`** because Render does not offer **free** background workers. Other services use **free** where the blueprint allows it.
+5. **Costs:** Render may reject **`plan: free`** for **`type: web`** (including static sites). This blueprint uses **`plan: starter`** for **signal-frontend** and **signal-worker**. **signal-backend** still uses **free** where your workspace allows it; if validation fails, bump it to **`starter`** the same way.
 6. In the Render dashboard, **manually add** these secrets (they are `sync: false` in the blueprint):
    - `REDDIT_CLIENT_ID`
    - `REDDIT_CLIENT_SECRET`

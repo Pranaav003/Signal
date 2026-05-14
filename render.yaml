@@ -69,10 +69,11 @@ services:
       - key: OPENAI_API_KEY
         sync: false
 
+  # Static sites are `type: web` + `runtime: static`; many workspaces no longer offer `plan: free` for web.
   - type: web
     name: signal-frontend
     runtime: static
-    plan: free
+    plan: starter
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
