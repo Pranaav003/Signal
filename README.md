@@ -84,15 +84,17 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 1. **Push** this repository to **GitHub** on the **`main`** branch.
 2. Go to **render.com → New → Blueprint**.
 3. Point Render at the **repo root** (it will pick up **`render.yaml`**).
-4. In the Render dashboard, **manually add** these secrets (they are `sync: false` in the blueprint):
+4. **Blueprint file:** Redis-compatible storage is a **`type: keyvalue`** service (`signal-redis`), not a legacy root-level `redis:` block. `fromService` references include the required **`type`** (`keyvalue` or `web`).
+5. **Costs:** `signal-worker` uses **`plan: starter`** because Render does not offer **free** background workers. Other services use **free** where the blueprint allows it.
+6. In the Render dashboard, **manually add** these secrets (they are `sync: false` in the blueprint):
    - `REDDIT_CLIENT_ID`
    - `REDDIT_CLIENT_SECRET`
    - `OPENAI_API_KEY`
-5. Click **Deploy**.
-6. **Logs to verify**
+7. Click **Deploy**.
+8. **Logs to verify**
    - **signal-backend:** `✓ Database connected` and `✓ Scheduler started: …`
    - **signal-worker:** `✓ Signal worker started`
-7. Open the **signal-frontend** URL, create your first **keyword set**, then wait for the first scan (or trigger via queue as configured).
+9. Open the **signal-frontend** URL, create your first **keyword set**, then wait for the first scan (or trigger via queue as configured).
 
 ---
 

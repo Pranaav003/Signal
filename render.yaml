@@ -1,7 +1,19 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Key Value (Redis-compatible) must be a `services` entry with `type: keyvalue`, not a root `redis:` block.
+
 services:
+  - type: keyvalue
+    name: signal-redis
+    plan: free
+    maxmemoryPolicy: noeviction
+    ipAllowList:
+      - source: 0.0.0.0/0
+        description: public (narrow for production if needed)
+
   - type: web
     name: signal-backend
-    env: node
+    runtime: node
+    plan: free
     rootDir: backend
     buildCommand: npm install && npm run migrate
     startCommand: npm start
@@ -15,6 +27,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: signal-redis
+          type: keyvalue
           property: connectionString
       - key: REDDIT_CLIENT_ID
         sync: false
@@ -27,9 +40,11 @@ services:
       - key: JWT_SECRET
         generateValue: true
 
+  # Workers cannot use the `free` instance type on Render (use starter+).
   - type: worker
     name: signal-worker
-    env: node
+    runtime: node
+    plan: starter
     rootDir: backend
     buildCommand: npm install
     startCommand: node src/jobs/worker.js
@@ -43,6 +58,7 @@ services:
       - key: REDIS_URL
         fromService:
           name: signal-redis
+          type: keyvalue
           property: connectionString
       - key: REDDIT_CLIENT_ID
         sync: false
@@ -55,7 +71,8 @@ services:
 
   - type: web
     name: signal-frontend
-    env: static
+    runtime: static
+    plan: free
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
@@ -63,12 +80,9 @@ services:
       - key: VITE_API_URL
         fromService:
           name: signal-backend
+          type: web
           property: url
 
 databases:
   - name: signal-db
-    plan: free
-
-redis:
-  - name: signal-redis
     plan: free
