@@ -199,7 +199,7 @@ async function main() {
             score_reasons,
             created_at
           ) VALUES ($1,$2,'reddit',$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-          ON CONFLICT (user_id, post_id) DO NOTHING`,
+          ON CONFLICT (user_id, keyword_set_id, post_id) DO NOTHING`,
           [
             userId,
             ksId,

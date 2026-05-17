@@ -1,45 +1,13 @@
-/** @typedef {{ title?: string; body_snippet?: string; created_utc?: number; subreddit?: string; score?: number; relevance_score?: number; keyword_set?: { product_description?: string; subreddits?: string[] } }} ResultLike */
-/** @typedef {{ product_description?: string; subreddits?: string[] }} KeywordSetLike */
+/** @typedef {{ title?: string; body_snippet?: string; created_utc?: number; subreddit?: string; score?: number; relevance_score?: number; keyword_set?: { product_description?: string; subreddits?: string[]; queries?: string[] } }} ResultLike */
+/** @typedef {{ product_description?: string; subreddits?: string[]; queries?: string[] }} KeywordSetLike */
+
+const { extractPhrases } = require('./keywordProcessor');
 
 const stopWords = new Set([
-  'a',
-  'an',
-  'the',
-  'for',
-  'and',
-  'or',
-  'but',
-  'in',
-  'on',
-  'at',
-  'to',
-  'of',
-  'with',
-  'my',
-  'i',
-  'is',
-  'are',
-  'we',
-  'us',
-  'built',
-  'build',
-  'looking',
-  'people',
-  'asking',
-  'about',
-  'run',
-  'running',
-  'find',
-  'threads',
-  'where',
-  'that',
-  'this',
-  'who',
-  'what',
-  'how',
-  'do',
-  'use',
-  'get',
+  'a', 'an', 'the', 'for', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'with',
+  'my', 'i', 'is', 'are', 'we', 'us', 'built', 'build', 'looking', 'people', 'asking',
+  'about', 'run', 'running', 'find', 'threads', 'where', 'that', 'this', 'who', 'what',
+  'how', 'do', 'use', 'get', 'tool', 'app', 'software', 'help', 'monitor', 'product',
 ]);
 
 const highIntentPhrases = [
@@ -60,7 +28,6 @@ const highIntentPhrases = [
   'best software',
   'tired of',
   'sick of',
-  'hate that',
   'frustrated with',
   'switching from',
   'alternative to',
@@ -71,6 +38,11 @@ const highIntentPhrases = [
   'help me choose',
   'can anyone suggest',
   'does anyone know',
+  'not getting applicants',
+  'hiring is',
+  'job posting',
+  'track net worth',
+  'portfolio',
 ];
 
 const mediumIntentPhrases = [
@@ -84,11 +56,11 @@ const mediumIntentPhrases = [
   'struggling with',
   'issue with',
   'problem with',
-  'help',
   'confused',
   'lost',
   'not sure',
   'wondering',
+  'need help',
 ];
 
 const businessSubreddits = [
@@ -100,6 +72,11 @@ const businessSubreddits = [
   'saas',
   'indiehackers',
   'productivity',
+  'recruiting',
+  'humanresources',
+  'personalfinance',
+  'financialplanning',
+  'investing',
 ];
 
 const offTopicSignals = [
@@ -117,11 +94,66 @@ const offTopicSignals = [
   'android',
   'iphone',
   'sunscreen',
-  'food',
-  'restaurant',
-  'travel',
-  'vacation',
 ];
+
+function leadScoreThreshold() {
+  const raw = Number.parseInt(process.env.LEAD_SCORE_THRESHOLD ?? '', 10);
+  if (Number.isFinite(raw) && raw >= 0) return raw;
+  return process.env.NODE_ENV === 'production' ? 20 : 12;
+}
+
+/**
+ * @param {KeywordSetLike | null | undefined} keywordSet
+ */
+function buildLeadContext(keywordSet = {}) {
+  const description = String(keywordSet.product_description || '');
+  const queryTerms = Array.isArray(keywordSet.queries)
+    ? keywordSet.queries.flatMap((q) =>
+        String(q || '')
+          .toLowerCase()
+          .split(/\W+/)
+          .filter((w) => w.length > 3 && !stopWords.has(w))
+      )
+    : [];
+
+  const productTerms = description
+    .toLowerCase()
+    .split(/\W+/)
+    .filter((w) => w.length > 3 && !stopWords.has(w));
+
+  const problemTerms = extractPhrases(description, 8).flatMap((p) =>
+    String(p)
+      .toLowerCase()
+      .split(/\W+/)
+      .filter((w) => w.length > 3 && !stopWords.has(w))
+  );
+
+  const subredditTargets = (keywordSet.subreddits || []).map((s) =>
+    String(s || '').toLowerCase().replace(/^r\//, '')
+  );
+
+  const allTerms = uniqueTerms([...productTerms, ...problemTerms, ...queryTerms]);
+
+  return {
+    product_terms: uniqueTerms(productTerms),
+    problem_terms: uniqueTerms(problemTerms),
+    query_terms: uniqueTerms(queryTerms),
+    subreddit_targets: subredditTargets,
+    all_terms: allTerms,
+  };
+}
+
+function uniqueTerms(list) {
+  const seen = new Set();
+  const out = [];
+  for (const w of list) {
+    const k = String(w || '').toLowerCase();
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(k);
+  }
+  return out;
+}
 
 /**
  * @param {ResultLike} result
@@ -134,51 +166,26 @@ function scoreResultDetailed(result, keywordSet = {}) {
   const title = (result.title || '').toLowerCase();
   const body = (result.body_snippet || '').toLowerCase();
   const fullText = `${title} ${body}`;
-  const subreddit = (result.subreddit || '').toLowerCase();
+  const subreddit = (result.subreddit || '').toLowerCase().replace(/^r\//, '');
 
-  const ks = keywordSet.product_description
-    ? keywordSet
-    : result.keyword_set ?? {};
+  const ks = keywordSet.product_description ? keywordSet : result.keyword_set ?? {};
+  const ctx = buildLeadContext(ks);
 
-  const description = String(ks.product_description || '');
-
-  const productWords = description
-    .toLowerCase()
-    .split(/\W+/)
-    .filter((w) => w.length > 3 && !stopWords.has(w));
-
-  const matchedWords = productWords.filter((w) => fullText.includes(w));
-  const matchRatio =
-    productWords.length > 0 ? matchedWords.length / productWords.length : 0;
-
-  if (matchRatio < 0.15 && matchedWords.length < 2) {
-    return {
-      score: 8,
-      reasons: [
-        'Low overlap with your monitor description keywords — likely off-topic for this product.',
-      ],
-    };
-  }
+  const matchedTerms = ctx.all_terms.filter((w) => fullText.includes(w));
+  const matchRatio = ctx.all_terms.length > 0 ? matchedTerms.length / ctx.all_terms.length : 0;
 
   let score = 0;
 
-  const titleMatches = productWords.filter((w) => title.includes(w));
-  const bodyMatches = productWords.filter((w) => body.includes(w));
-
-  const titlePts = Math.min(titleMatches.length * 8, 24);
-  score += titlePts;
-  if (titlePts > 0) {
-    reasons.push(
-      `Title matches ${titleMatches.length} product keyword(s) (+${titlePts} pts).`
-    );
-  }
-
-  const bodyPts = Math.min(bodyMatches.length * 4, 16);
-  score += bodyPts;
-  if (bodyPts > 0) {
-    reasons.push(
-      `Body matches ${bodyMatches.length} product keyword(s) (+${bodyPts} pts).`
-    );
+  if (matchedTerms.length >= 2) {
+    const pts = Math.min(matchedTerms.length * 5, 20);
+    score += pts;
+    reasons.push(`Matches ${matchedTerms.length} monitor term(s) (+${pts} pts).`);
+  } else if (matchedTerms.length === 1) {
+    score += 6;
+    reasons.push('Matches 1 monitor term (+6 pts).');
+  } else if (matchRatio < 0.1 && ctx.all_terms.length > 0) {
+    score -= 5;
+    reasons.push('Low keyword overlap (−5 pts) — still scored on intent/subreddit.');
   }
 
   let intentScore = 0;
@@ -193,9 +200,7 @@ function scoreResultDetailed(result, keywordSet = {}) {
   const intentCapped = Math.min(intentScore, 30);
   score += intentCapped;
   if (intentCapped > 0) {
-    reasons.push(
-      `Help-seeking / buying-intent language (+${intentCapped} pts, capped at 30).`
-    );
+    reasons.push(`Intent language (+${intentCapped} pts, capped at 30).`);
   }
 
   if (title.includes('?')) {
@@ -207,9 +212,7 @@ function scoreResultDetailed(result, keywordSet = {}) {
     reasons.push('Body includes a question (+4 pts).');
   }
 
-  const targetSubreddits = (ks.subreddits || []).map((s) =>
-    String(s || '').toLowerCase()
-  );
+  const targetSubreddits = ctx.subreddit_targets;
 
   if (
     targetSubreddits.length &&
@@ -218,13 +221,13 @@ function scoreResultDetailed(result, keywordSet = {}) {
     )
   ) {
     score += 15;
-    reasons.push('Posted in one of your monitor target subreddits (+15 pts).');
+    reasons.push('Posted in a target subreddit (+15 pts).');
   } else if (businessSubreddits.some((s) => subreddit.includes(s))) {
     score += 8;
-    reasons.push('Posted in a related business/builder subreddit (+8 pts).');
-  } else {
-    score -= 10;
-    reasons.push('Subreddit is not in your targets or common builder subs (−10 pts).');
+    reasons.push('Posted in a related business subreddit (+8 pts).');
+  } else if (targetSubreddits.length) {
+    score -= 4;
+    reasons.push('Subreddit not in target list (−4 pts).');
   }
 
   let tsSec = Number(result.created_utc ?? 0);
@@ -239,13 +242,7 @@ function scoreResultDetailed(result, keywordSet = {}) {
   if (!Number.isNaN(tsSec)) {
     const ageHours = (Date.now() / 1000 - tsSec) / 3600;
     if (ageHours >= 0) {
-      if (ageHours < 1) {
-        recencyPts = 25;
-        recencyLabel = 'under 1 hour old';
-      } else if (ageHours < 6) {
-        recencyPts = 19;
-        recencyLabel = 'under 6 hours old';
-      } else if (ageHours < 24) {
+      if (ageHours < 24) {
         recencyPts = 14;
         recencyLabel = 'under 24 hours old';
       } else if (ageHours < 72) {
@@ -254,48 +251,31 @@ function scoreResultDetailed(result, keywordSet = {}) {
       } else if (ageHours < 168) {
         recencyPts = 4;
         recencyLabel = 'under 1 week old';
-      } else if (ageHours < 336) {
-        recencyPts = 1;
-        recencyLabel = '1–2 weeks old';
       }
     }
   }
   score += recencyPts;
   if (recencyPts > 0) {
-    reasons.push(`Recency: post is ${recencyLabel} (+${recencyPts} pts).`);
-  } else if (!Number.isNaN(tsSec)) {
-    reasons.push('Recency: older than 2 weeks — no freshness bonus.');
+    reasons.push(`Recency: ${recencyLabel} (+${recencyPts} pts).`);
   }
 
   let offTopicPenalty = 0;
   offTopicSignals.forEach((s) => {
-    if (fullText.includes(s)) offTopicPenalty += 8;
+    if (fullText.includes(s)) offTopicPenalty += 6;
   });
   if (offTopicPenalty > 0) {
     score -= offTopicPenalty;
-    reasons.push(
-      `Possible off-topic signals in text (−${offTopicPenalty} pts).`
-    );
+    reasons.push(`Possible off-topic signals (−${offTopicPenalty} pts).`);
   }
 
   const finalScore = Math.max(0, Math.min(100, Math.round(score)));
-  reasons.push(`Total clamped to 0–100 → ${finalScore}.`);
+  reasons.push(`Total → ${finalScore} (threshold ${leadScoreThreshold()}).`);
 
   return { score: finalScore, reasons };
 }
 
-/**
- * @param {ResultLike} result
- * @param {KeywordSetLike | null | undefined} keywordSet
- */
 function scoreResult(result, keywordSet = {}) {
   return scoreResultDetailed(result, keywordSet).score;
-}
-
-function leadScoreThreshold() {
-  const raw = Number.parseInt(process.env.LEAD_SCORE_THRESHOLD ?? '', 10);
-  if (Number.isFinite(raw) && raw >= 0) return raw;
-  return 30;
 }
 
 /**
@@ -310,11 +290,9 @@ function filterLowSignal(results, keywordSet) {
 
   return results.filter((r) => {
     const s =
-      typeof r.score === 'number' && !Number.isNaN(r.score)
-        ? r.score
-        : typeof r.relevance_score === 'number' && !Number.isNaN(r.relevance_score)
-          ? r.relevance_score
-          : scoreResult(r, ks.keyword_set ?? ks);
+      typeof r.relevance_score === 'number' && !Number.isNaN(r.relevance_score)
+        ? r.relevance_score
+        : scoreResult(r, ks);
     return s >= minScore;
   });
 }
@@ -324,4 +302,5 @@ module.exports = {
   scoreResultDetailed,
   filterLowSignal,
   leadScoreThreshold,
+  buildLeadContext,
 };

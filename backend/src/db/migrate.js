@@ -13,6 +13,9 @@ async function main() {
     await pool.query(
       `ALTER TABLE keyword_sets ADD COLUMN IF NOT EXISTS pitch_line TEXT`
     );
+    await pool.query(
+      `ALTER TABLE keyword_sets ADD COLUMN IF NOT EXISTS scan_progress JSONB`
+    );
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tracked_replies (
@@ -41,6 +44,14 @@ async function main() {
     await pool.query(
       `ALTER TABLE leads ADD COLUMN IF NOT EXISTS score_reasons TEXT[] NOT NULL DEFAULT '{}'::text[]`
     );
+
+    await pool.query(`ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_user_id_post_id_key`);
+    await pool.query(`ALTER TABLE leads DROP CONSTRAINT IF EXISTS leads_user_id_post_id_unique`);
+    await pool.query(`DROP INDEX IF EXISTS idx_leads_user_keyword_set_post`);
+    await pool.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_leads_user_keyword_set_post
+      ON leads (user_id, keyword_set_id, post_id)
+    `);
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS thread_suppressions (

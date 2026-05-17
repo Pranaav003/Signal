@@ -5,6 +5,7 @@ import AddMonitorModal from '../components/AddMonitorModal'
 import LimitModal from '../components/LimitModal'
 import KeywordSetItem from '../components/KeywordSetItem'
 import LeadFeed from '../components/LeadFeed'
+import ScanProgress from '../components/ScanProgress'
 import { useKeywordSets } from '../hooks/useKeywordSets'
 import { useLeads } from '../hooks/useLeads'
 import { useTrackedReplies } from '../hooks/useTrackedReplies'
@@ -21,6 +22,14 @@ export default function Dashboard() {
     deleteKeywordSet,
   } = useKeywordSets(userId)
 
+  const [scanningKeywordSet, setScanningKeywordSet] = useState(null)
+  const [showMonitorModal, setShowMonitorModal] = useState(false)
+  const [showLimitModal, setShowLimitModal] = useState(false)
+  const [monitorToEdit, setMonitorToEdit] = useState(null)
+  const [mainView, setMainView] = useState('leads')
+  const [selectedKeywordSetId, setSelectedKeywordSetId] = useState(null)
+  const [tab, setTab] = useState('unread')
+
   const {
     leads,
     loading: leadsLoading,
@@ -29,14 +38,9 @@ export default function Dashboard() {
     dismissLead,
     generateDraft,
     refreshLeads,
-  } = useLeads(userId)
+  } = useLeads(userId, { isScanning: Boolean(scanningKeywordSet) })
 
   const { rows: trackedRows, refresh: refreshTracked } = useTrackedReplies(userId)
-
-  const [showMonitorModal, setShowMonitorModal] = useState(false)
-  const [showLimitModal, setShowLimitModal] = useState(false)
-  const [monitorToEdit, setMonitorToEdit] = useState(null)
-  const [mainView, setMainView] = useState('leads')
 
   const closeMonitorModal = () => {
     setShowMonitorModal(false)
@@ -47,8 +51,31 @@ export default function Dashboard() {
     () => keywordSets.filter((k) => k.active !== false),
     [keywordSets]
   )
-  const [selectedKeywordSetId, setSelectedKeywordSetId] = useState(null)
-  const [tab, setTab] = useState('unread')
+
+  const leadTabs = useMemo(() => {
+    const base = [
+      { id: 'all', label: 'All' },
+      { id: 'unread', label: 'Unread' },
+    ]
+    if (scanningKeywordSet) {
+      base.push({ id: 'scanning', label: 'Scanning' })
+    }
+    return base
+  }, [scanningKeywordSet])
+
+  useEffect(() => {
+    if (!scanningKeywordSet || !selectedKeywordSetId) return
+    if (scanningKeywordSet.id !== selectedKeywordSetId) {
+      setScanningKeywordSet(null)
+      setTab((t) => (t === 'scanning' ? 'all' : t))
+    }
+  }, [selectedKeywordSetId, scanningKeywordSet])
+
+  useEffect(() => {
+    if (tab === 'scanning' && !scanningKeywordSet) {
+      setTab('all')
+    }
+  }, [tab, scanningKeywordSet])
 
   useEffect(() => {
     if (!activeKeywordSets.length) {
@@ -63,8 +90,17 @@ export default function Dashboard() {
       return
     }
 
+    // Keep selection stable while the new monitor row may not yet appear in the
+    // refetched list (or is filtered differently) so we do not clear scanning.
+    if (
+      scanningKeywordSet?.id &&
+      selectedKeywordSetId === scanningKeywordSet.id
+    ) {
+      return
+    }
+
     setSelectedKeywordSetId(activeKeywordSets[0].id)
-  }, [activeKeywordSets, selectedKeywordSetId])
+  }, [activeKeywordSets, selectedKeywordSetId, scanningKeywordSet])
 
   const unseenBySet = useMemo(() => {
     const m = new Map()
@@ -93,6 +129,13 @@ export default function Dashboard() {
 
     return scopedLeads
   }, [scopedLeads, tab])
+
+  const headerLeadCount = useMemo(() => {
+    if (tab === 'scanning') {
+      return scopedLeads.length
+    }
+    return visibleLeads.length
+  }, [tab, scopedLeads, visibleLeads])
 
   const pageLoading =
     Boolean(userLoading) || (Boolean(userId) && Boolean(setsLoading))
@@ -228,7 +271,7 @@ export default function Dashboard() {
                     fontVariantNumeric: 'tabular-nums',
                   }}
                 >
-                  {visibleLeads.length}
+                  {headerLeadCount}
                 </span>
               </div>
 
@@ -236,10 +279,7 @@ export default function Dashboard() {
                 className="mt-6 inline-flex rounded-md border"
                 style={{ borderColor: 'var(--border)', background: 'var(--surface)' }}
               >
-                {[
-                  { id: 'all', label: 'All' },
-                  { id: 'unread', label: 'Unread' },
-                ].map(({ id, label }) => {
+                {leadTabs.map(({ id, label }) => {
                   const active = tab === id
 
                   return (
@@ -266,17 +306,37 @@ export default function Dashboard() {
               {pageLoading ? (
                 <p style={{ color: 'var(--muted)' }}>Bringing your workstation online...</p>
               ) : (
-                <LeadFeed
-                  leads={visibleLeads}
-                  loading={leadsLoading}
-                  markSeen={markSeen}
-                  markUnread={markUnread}
-                  dismissLead={dismissLead}
-                  generateDraft={generateDraft}
-                  userId={userId}
-                  trackedReplies={trackedRows}
-                  onTrackedRefresh={refreshTracked}
-                />
+                <>
+                  {scanningKeywordSet ? (
+                    <div className={tab === 'scanning' ? '' : 'hidden'} aria-hidden={tab !== 'scanning'}>
+                      <ScanProgress
+                        keywordSet={scanningKeywordSet}
+                        onScanComplete={() => {
+                          void refreshLeads()
+                        }}
+                        onComplete={() => {
+                          void refreshLeads().finally(() => {
+                            setScanningKeywordSet(null)
+                            setTab('all')
+                          })
+                        }}
+                      />
+                    </div>
+                  ) : null}
+                  {tab !== 'scanning' ? (
+                    <LeadFeed
+                      leads={visibleLeads}
+                      loading={leadsLoading}
+                      markSeen={markSeen}
+                      markUnread={markUnread}
+                      dismissLead={dismissLead}
+                      generateDraft={generateDraft}
+                      userId={userId}
+                      trackedReplies={trackedRows}
+                      onTrackedRefresh={refreshTracked}
+                    />
+                  ) : null}
+                </>
               )}
             </div>
           </>
@@ -302,10 +362,14 @@ export default function Dashboard() {
         editKeywordSet={monitorToEdit}
         onSyncList={refetchKeywordSets}
         onMonitorLimitReached={() => setShowLimitModal(true)}
-        onSuccess={async (result) => {
+        onSuccess={async (result, meta) => {
           await refetchKeywordSets()
           await refreshLeads()
           if (result?.id) setSelectedKeywordSetId(result.id)
+          if (meta?.mode === 'create' && result?.id) {
+            setScanningKeywordSet(result)
+            setTab('scanning')
+          }
           closeMonitorModal()
         }}
       />

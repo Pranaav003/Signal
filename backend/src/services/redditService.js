@@ -5,17 +5,57 @@ if (process.env.USE_MOCK_REDDIT === 'true') {
 
 const axios = require('axios');
 
-const tokenCache = { token: null, expiresAt: 0 };
-
-/** @type {number} unix seconds */
-function nowSec() {
-  return Math.floor(Date.now() / 1000);
-}
-
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 let lastRequestTime = 0;
-const MIN_INTERVAL_MS = 1100;
+const configuredDelay = Number(process.env.REDDIT_REQUEST_DELAY_MS);
+const MIN_INTERVAL_MS =
+  Number.isFinite(configuredDelay) && configuredDelay > 0
+    ? Math.max(configuredDelay, 1500)
+    : 2000;
+
+function userAgent() {
+  return (
+    process.env.REDDIT_USER_AGENT ||
+    'Mozilla/5.0 (compatible; Signal/1.0; +https://github.com/signal)'
+  );
+}
+
+function parseRedditError(err) {
+  const status = err?.response?.status;
+  const body = err?.response?.data;
+  const message =
+    (typeof body === 'string' && body) ||
+    body?.message ||
+    body?.error ||
+    err?.message ||
+    'Reddit API error';
+
+  if (status === 403) {
+    return {
+      code: 'REDDIT_BLOCKED',
+      status,
+      message: `Reddit blocked the request (403). Set REDDIT_USER_AGENT in .env to a descriptive value. ${message}`,
+    };
+  }
+  if (status === 429) {
+    return { code: 'REDDIT_RATE_LIMITED', status, message: String(message) };
+  }
+  return {
+    code: 'REDDIT_API_ERROR',
+    status: status || null,
+    message: String(message),
+  };
+}
+
+/** @deprecated OAuth not used — kept for scripts that import it */
+async function getAccessToken() {
+  return null;
+}
+
+function redditCredentialsPresent() {
+  return Boolean(process.env.REDDIT_USER_AGENT);
+}
 
 async function enforceRateLimit() {
   const elapsed = Date.now() - lastRequestTime;
@@ -25,43 +65,34 @@ async function enforceRateLimit() {
   lastRequestTime = Date.now();
 }
 
-async function getAccessToken() {
-  const t = nowSec();
-  if (
-    tokenCache.token != null &&
-    t < tokenCache.expiresAt - 60
-  ) {
-    return tokenCache.token;
-  }
-
-  const clientId = process.env.REDDIT_CLIENT_ID;
-  const clientSecret = process.env.REDDIT_CLIENT_SECRET;
-  const userAgent = process.env.REDDIT_USER_AGENT;
-
+async function jsonGet(url, params = {}, attempt = 1) {
   await enforceRateLimit();
 
-  const { data } = await axios.post(
-    'https://www.reddit.com/api/v1/access_token',
-    'grant_type=client_credentials',
-    {
+  try {
+    const { data } = await axios.get(url, {
+      params: { ...params, raw_json: 1 },
       headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': userAgent,
+        'User-Agent': userAgent(),
+        Accept: 'application/json',
       },
-      auth: {
-        username: clientId,
-        password: clientSecret,
-      },
+      timeout: 30000,
+    });
+    return data;
+  } catch (err) {
+    const error = parseRedditError(err);
+    const maxAttempts = Number(process.env.REDDIT_429_MAX_RETRIES) || 3;
+    if (error.code === 'REDDIT_RATE_LIMITED' && attempt < maxAttempts) {
+      const waitMs = Number(process.env.REDDIT_429_BACKOFF_MS) || 60_000;
+      console.warn(
+        `[redditService] Reddit 429 — waiting ${Math.round(waitMs / 1000)}s (retry ${attempt + 1}/${maxAttempts})`
+      );
+      await sleep(waitMs);
+      return jsonGet(url, params, attempt + 1);
     }
-  );
-
-  tokenCache.token = data.access_token;
-  const ttl = Number(data.expires_in);
-  tokenCache.expiresAt =
-    nowSec() +
-    (Number.isFinite(ttl) && ttl > 0 ? ttl : 3300);
-
-  return tokenCache.token;
+    const wrapped = new Error(error.message);
+    wrapped.redditError = error;
+    throw wrapped;
+  }
 }
 
 function normalizePost(post) {
@@ -74,6 +105,7 @@ function normalizePost(post) {
     subreddit: post.data.subreddit,
     created_utc: post.data.created_utc,
     type: 'post',
+    platform: 'reddit',
   };
 }
 
@@ -87,21 +119,8 @@ function normalizeComment(comment) {
     subreddit: comment.data.subreddit,
     created_utc: comment.data.created_utc,
     type: 'comment',
+    platform: 'reddit',
   };
-}
-
-async function oauthGet(token, url, params) {
-  await enforceRateLimit();
-
-  const { data } = await axios.get(url, {
-    params,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'User-Agent': process.env.REDDIT_USER_AGENT,
-    },
-  });
-
-  return data;
 }
 
 function normalizeListing(data) {
@@ -125,65 +144,141 @@ function normalizeListing(data) {
   return out;
 }
 
-async function searchReddit(query) {
-  try {
-    const token = await getAccessToken();
+async function fetchSearchListing(params) {
+  const data = await jsonGet('https://www.reddit.com/search.json', params);
+  return normalizeListing(data);
+}
 
-    const linkData = await oauthGet(token, 'https://oauth.reddit.com/search', {
-      q: query,
+async function fetchSubredditSearchListing(subreddit, params) {
+  const sub = String(subreddit).replace(/^r\//, '');
+  const data = await jsonGet(`https://www.reddit.com/r/${encodeURIComponent(sub)}/search.json`, {
+    restrict_sr: 'on',
+    ...params,
+  });
+  return normalizeListing(data);
+}
+
+/**
+ * Verify public Reddit JSON API is reachable (no OAuth).
+ */
+async function validateRedditCredentials() {
+  try {
+    const items = await fetchSearchListing({
+      q: 'small business software',
       sort: 'new',
-      limit: 25,
+      limit: 3,
       type: 'link',
     });
-
-    const commentData = await oauthGet(token, 'https://oauth.reddit.com/search', {
-      q: query,
-      sort: 'new',
-      limit: 25,
-      type: 'comment',
-    });
-
-    return [...normalizeListing(linkData), ...normalizeListing(commentData)];
+    return {
+      ok: true,
+      mode: 'public_json',
+      sample_count: items.length,
+    };
   } catch (err) {
-    console.error('[redditService] searchReddit:', err.response?.data || err.message || err);
-    return [];
+    const error = err.redditError || parseRedditError(err);
+    return { ok: false, error };
   }
 }
 
-async function searchSubreddit(subreddit, query) {
+async function searchRedditStructured(query) {
   try {
-    const token = await getAccessToken();
-    const path = `/r/${subreddit.replace(/^r\//, '')}/search`;
-    const base = `https://oauth.reddit.com${path}`;
+    const perPage =
+      Number(process.env.REDDIT_SEARCH_LIMIT) > 0 ? Number(process.env.REDDIT_SEARCH_LIMIT) : 25;
 
-    const linkData = await oauthGet(token, base, {
+    const linkItems = await fetchSearchListing({
       q: query,
       sort: 'new',
-      limit: 25,
-      restrict_sr: true,
+      limit: perPage,
       type: 'link',
     });
 
-    const commentData = await oauthGet(token, base, {
+    const commentItems = await fetchSearchListing({
       q: query,
       sort: 'new',
-      limit: 25,
-      restrict_sr: true,
+      limit: perPage,
       type: 'comment',
     });
 
-    return [...normalizeListing(linkData), ...normalizeListing(commentData)];
+    return {
+      ok: true,
+      items: [...linkItems, ...commentItems],
+    };
   } catch (err) {
-    console.error(
-      '[redditService] searchSubreddit:',
-      err.response?.data || err.message || err
-    );
+    const error = err.redditError || parseRedditError(err);
+    console.error('[redditService] searchReddit:', error);
+    if (error.code === 'REDDIT_BLOCKED') {
+      const wrapped = new Error(error.message);
+      wrapped.redditError = error;
+      throw wrapped;
+    }
+    return { ok: false, items: [], error };
+  }
+}
+
+async function searchSubredditStructured(subreddit, query) {
+  try {
+    const perPage =
+      Number(process.env.REDDIT_SEARCH_LIMIT) > 0 ? Number(process.env.REDDIT_SEARCH_LIMIT) : 25;
+
+    const linkItems = await fetchSubredditSearchListing(subreddit, {
+      q: query,
+      sort: 'new',
+      limit: perPage,
+      type: 'link',
+    });
+
+    const commentItems = await fetchSubredditSearchListing(subreddit, {
+      q: query,
+      sort: 'new',
+      limit: perPage,
+      type: 'comment',
+    });
+
+    return {
+      ok: true,
+      items: [...linkItems, ...commentItems],
+    };
+  } catch (err) {
+    const error = err.redditError || parseRedditError(err);
+    console.error('[redditService] searchSubreddit:', error);
+    if (error.code === 'REDDIT_BLOCKED') {
+      const wrapped = new Error(error.message);
+      wrapped.redditError = error;
+      throw wrapped;
+    }
+    return { ok: false, items: [], error };
+  }
+}
+
+async function searchReddit(query) {
+  const result = await searchRedditStructured(query);
+  if (!result.ok) {
+    if (result.error?.code === 'REDDIT_BLOCKED' || result.error?.code === 'REDDIT_RATE_LIMITED') {
+      throw Object.assign(new Error(result.error.message), { redditError: result.error });
+    }
     return [];
   }
+  return result.items;
+}
+
+async function searchSubreddit(subreddit, query) {
+  const result = await searchSubredditStructured(subreddit, query);
+  if (!result.ok) {
+    if (result.error?.code === 'REDDIT_BLOCKED' || result.error?.code === 'REDDIT_RATE_LIMITED') {
+      throw Object.assign(new Error(result.error.message), { redditError: result.error });
+    }
+    return [];
+  }
+  return result.items;
 }
 
 module.exports = {
   getAccessToken,
+  validateRedditCredentials,
+  redditCredentialsPresent,
   searchReddit,
   searchSubreddit,
+  searchRedditStructured,
+  searchSubredditStructured,
+  parseRedditError,
 };

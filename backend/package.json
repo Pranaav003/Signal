@@ -7,8 +7,11 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
+    "worker": "node src/jobs/worker.js",
+    "dev:worker": "nodemon src/jobs/worker.js",
     "migrate": "node src/db/migrate.js",
     "clear-queue": "node src/scripts/clearQueue.js",
+    "test:reddit": "node src/scripts/testReddit.js",
     "test:scan": "node src/scripts/testScan.js",
     "seed": "node src/scripts/seedLeads.js"
   },

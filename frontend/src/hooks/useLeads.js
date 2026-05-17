@@ -1,16 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { api, BASE_URL } from '../lib/api'
+import { api } from '../lib/api'
 
 const DEFAULT_FETCH_LIMIT = 200
 const POLL_SLOW_MS = 30_000
-const POLL_FAST_MS = 8000
-
-function apiUrl(path) {
-  const root = String(BASE_URL || '').replace(/\/+$/, '')
-  const p = path.startsWith('/') ? path : `/${path}`
-  return root ? `${root}${p}` : p
-}
+const POLL_SCAN_MS = 20_000
+const RATE_LIMIT_BACKOFF_MS = 30_000
 
 function normalizeLeadsResponse(data) {
   if (Array.isArray(data)) return data
@@ -19,56 +14,89 @@ function normalizeLeadsResponse(data) {
 }
 
 /**
- * Stable polling: `fetchLeads` depends only on `userId` and `sort` (primitives).
  * @param {string | null} userId
  * @param {{ isScanning?: boolean, sort?: string, seen?: boolean | string, limit?: number }} [options]
  */
-export function useLeads(userId, { isScanning = false, sort = 'score', seen, limit } = {}) {
+export function useLeads(userId, options = {}) {
+  const {
+    isScanning = false,
+    sort = 'score',
+    seen,
+    limit = DEFAULT_FETCH_LIMIT,
+  } = options
+
   const [leads, setLeads] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [loading, setLoading] = useState(Boolean(userId))
   const [newLeadIds, setNewLeadIds] = useState([])
   const [newLeadCount, setNewLeadCount] = useState(0)
+  const [pollingMessage, setPollingMessage] = useState('')
 
-  const isMountedRef = useRef(true)
+  const mountedRef = useRef(false)
+  const inFlightRef = useRef(false)
+  const pollTimeoutRef = useRef(null)
+  const backoffUntilRef = useRef(0)
+  const seenRef = useRef(seen)
   const prevLeadsRef = useRef([])
   const prevCountRef = useRef(0)
   const toastTimerRef = useRef(null)
   const animTimerRef = useRef(null)
 
-  const seenRef = useRef(seen)
   seenRef.current = seen
 
   useEffect(() => {
-    isMountedRef.current = true
+    mountedRef.current = true
     return () => {
-      isMountedRef.current = false
+      mountedRef.current = false
+      if (pollTimeoutRef.current != null) {
+        window.clearTimeout(pollTimeoutRef.current)
+        pollTimeoutRef.current = null
+      }
+      if (toastTimerRef.current != null) {
+        window.clearTimeout(toastTimerRef.current)
+        toastTimerRef.current = null
+      }
+      if (animTimerRef.current != null) {
+        window.clearTimeout(animTimerRef.current)
+        animTimerRef.current = null
+      }
     }
   }, [])
 
   const fetchLeads = useCallback(async () => {
     if (!userId) {
-      setLoading(false)
+      if (mountedRef.current) {
+        setLeads([])
+        setLoading(false)
+      }
       return []
     }
+
+    if (inFlightRef.current) {
+      return prevLeadsRef.current
+    }
+
+    if (Date.now() < backoffUntilRef.current) {
+      return prevLeadsRef.current
+    }
+
+    inFlightRef.current = true
 
     try {
       const fetchLimit =
         limit != null && Number(limit) > 0 ? Number(limit) : DEFAULT_FETCH_LIMIT
-      const params = new URLSearchParams({
+      const params = {
         sort: sort || 'score',
-        limit: String(fetchLimit),
-      })
+        limit: fetchLimit,
+      }
       const sv = seenRef.current
       if (sv !== undefined && sv !== null && sv !== '') {
-        params.set('seen', sv === true || sv === 'true' ? 'true' : 'false')
+        params.seen = sv === true || sv === 'true' ? 'true' : 'false'
       }
 
-      const url = `${apiUrl(`/api/leads/user/${userId}`)}?${params}`
-      const res = await fetch(url)
-      const data = await res.json()
+      const { data } = await api.get(`/api/leads/user/${userId}`, { params })
       const arr = normalizeLeadsResponse(data)
 
-      if (!isMountedRef.current) return arr
+      if (!mountedRef.current) return arr
 
       const prev = prevLeadsRef.current
       const prevCount = prevCountRef.current
@@ -89,12 +117,22 @@ export function useLeads(userId, { isScanning = false, sort = 'score', seen, lim
 
       setLeads(arr)
       prevLeadsRef.current = arr
+      setPollingMessage('')
       return arr
     } catch (err) {
-      console.error('[useLeads] fetch failed:', err)
-      return []
+      if (err?.response?.status === 429) {
+        backoffUntilRef.current = Date.now() + RATE_LIMIT_BACKOFF_MS
+        if (mountedRef.current) {
+          setPollingMessage('Refreshing too quickly. Waiting before retrying...')
+        }
+        return prevLeadsRef.current
+      }
+
+      console.error('[useLeads] fetch failed:', err?.message || err)
+      return prevLeadsRef.current
     } finally {
-      if (isMountedRef.current) setLoading(false)
+      inFlightRef.current = false
+      if (mountedRef.current) setLoading(false)
     }
   }, [userId, sort, limit])
 
@@ -105,27 +143,48 @@ export function useLeads(userId, { isScanning = false, sort = 'score', seen, lim
       prevCountRef.current = 0
       setNewLeadIds([])
       setNewLeadCount(0)
+      setPollingMessage('')
       setLoading(false)
       return undefined
     }
 
+    let cancelled = false
+
+    const schedule = (delayMs) => {
+      if (cancelled) return
+      if (pollTimeoutRef.current != null) {
+        window.clearTimeout(pollTimeoutRef.current)
+      }
+      pollTimeoutRef.current = window.setTimeout(() => {
+        void tick()
+      }, delayMs)
+    }
+
+    const tick = async () => {
+      if (cancelled) return
+
+      const now = Date.now()
+      if (backoffUntilRef.current > now) {
+        schedule(backoffUntilRef.current - now)
+        return
+      }
+
+      await fetchLeads()
+
+      if (cancelled) return
+      const nextDelay = isScanning ? POLL_SCAN_MS : POLL_SLOW_MS
+      schedule(nextDelay)
+    }
+
     setLoading(true)
-    void fetchLeads()
-    return undefined
-  }, [userId, fetchLeads])
-
-  useEffect(() => {
-    if (!userId) return undefined
-
-    const ms = isScanning ? POLL_FAST_MS : POLL_SLOW_MS
-    const id = window.setInterval(() => {
-      void fetchLeads()
-    }, ms)
+    void tick()
 
     return () => {
-      window.clearInterval(id)
-      if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current)
-      if (animTimerRef.current) window.clearTimeout(animTimerRef.current)
+      cancelled = true
+      if (pollTimeoutRef.current != null) {
+        window.clearTimeout(pollTimeoutRef.current)
+        pollTimeoutRef.current = null
+      }
     }
   }, [userId, isScanning, fetchLeads])
 
@@ -171,8 +230,8 @@ export function useLeads(userId, { isScanning = false, sort = 'score', seen, lim
     [userId]
   )
 
-  const generateDraft = useCallback(async (id, options = {}) => {
-    const { force = false } = options
+  const generateDraft = useCallback(async (id, draftOptions = {}) => {
+    const { force = false } = draftOptions
     const { data } = await api.post(`/api/leads/${id}/draft`, { force })
     const draft = typeof data?.draft === 'string' ? data.draft : ''
 
@@ -193,6 +252,7 @@ export function useLeads(userId, { isScanning = false, sort = 'score', seen, lim
     loading,
     newLeadIds,
     newLeadCount,
+    pollingMessage,
     markSeen,
     markUnread,
     dismissLead,

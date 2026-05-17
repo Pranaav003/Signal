@@ -14,6 +14,7 @@ CREATE TABLE IF NOT EXISTS keyword_sets (
   active BOOLEAN DEFAULT true,
   scan_interval_hours INTEGER DEFAULT 6,
   last_scanned_at TIMESTAMPTZ,
+  scan_progress JSONB,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   reddit_fit TEXT DEFAULT 'good',
   fit_warning TEXT,
@@ -38,7 +39,7 @@ CREATE TABLE IF NOT EXISTS leads (
   ai_draft TEXT,
   score_reasons TEXT[] NOT NULL DEFAULT '{}',
   created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE (user_id, post_id)
+  UNIQUE (user_id, keyword_set_id, post_id)
 );
 
 CREATE TABLE IF NOT EXISTS thread_suppressions (

@@ -1,7 +1,7 @@
 {
   "name": "signal",
   "private": true,
-  "description": "Run `npm run dev` from repo root for one terminal with API + Vite.",
+  "description": "Run `npm run dev` from repo root for API + worker + Vite in one terminal.",
   "scripts": {
     "dev": "bash scripts/dev-all.sh"
   }

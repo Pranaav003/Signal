@@ -8,7 +8,7 @@ const MAX_CHARS = 240
  * @param {{
  *   isOpen: boolean,
  *   onClose: () => void,
- *   onSuccess: (created?: { id: string }) => void | Promise<void>,
+ *   onSuccess: (row?: { id: string }, meta?: { mode: 'create' | 'edit' }) => void | Promise<void>,
  *   onMonitorLimitReached?: () => void,
  *   onDraftDeactivated?: () => void,
  *   userId: string | null,
@@ -187,7 +187,7 @@ export default function AddMonitorModal({
         }
       }
 
-      await Promise.resolve(onSuccess?.(updated))
+      await Promise.resolve(onSuccess?.(updated, { mode: 'edit' }))
     } catch (err) {
       const msg =
         err?.response?.data?.error ||
@@ -230,7 +230,7 @@ export default function AddMonitorModal({
             'Continue anyway?'
         )
         if (proceed) {
-          await Promise.resolve(onSuccess?.(created))
+          await Promise.resolve(onSuccess?.(created, { mode: 'create' }))
         } else {
           try {
             await api.delete(`/api/keyword-sets/${created.id}`)
@@ -241,7 +241,7 @@ export default function AddMonitorModal({
           setDescription(String(created.product_description || '').slice(0, MAX_CHARS))
         }
       } else {
-        await Promise.resolve(onSuccess?.(created))
+        await Promise.resolve(onSuccess?.(created, { mode: 'create' }))
       }
     } catch (err) {
       if (

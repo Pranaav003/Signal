@@ -2,7 +2,11 @@ const express = require('express');
 
 const pool = require('../db/connection');
 const { generateQueries } = require('../services/keywordProcessor');
-const { addScanJob, rescheduleRepeatableScanForKeywordSet } = require('../jobs/scanJob');
+const {
+  addScanJob,
+  getManualScanJobState,
+  rescheduleRepeatableScanForKeywordSet,
+} = require('../jobs/scanJob');
 const { generateExamplePost } = require('../services/draftService');
 
 const router = express.Router();
@@ -161,6 +165,67 @@ router.delete('/duplicates', async (req, res) => {
   }
 });
 
+const SCANNING_PROGRESS_PHASES = new Set([
+  'active',
+  'starting',
+  'scanning',
+  'reddit_global',
+  'subreddit',
+  'dedupe',
+  'score',
+  'persist',
+  'finalize',
+]);
+
+function resolveScanStatus(keywordSet, _leadsFound, jobState) {
+  const progress = keywordSet.scan_progress;
+  const progressPhase = progress && progress.phase ? String(progress.phase) : null;
+
+  let status;
+
+  // Current scan in progress — must win over stale last_scanned_at from an older run.
+  if (progressPhase === 'queued') {
+    status = 'queued';
+  } else if (SCANNING_PROGRESS_PHASES.has(progressPhase)) {
+    status = 'scanning';
+  } else if (jobState === 'active') {
+    status = 'scanning';
+  } else if (jobState === 'waiting' || jobState === 'delayed' || jobState === 'paused') {
+    status = 'queued';
+  } else if (progressPhase === 'error') {
+    status = 'failed';
+  } else if (progressPhase === 'complete') {
+    status = 'complete';
+  } else if (jobState === 'failed') {
+    status = 'failed';
+  } else if (keywordSet.last_scanned_at) {
+    status = 'complete';
+  } else if (jobState === 'completed') {
+    status = 'unknown';
+  } else {
+    status = 'unknown';
+  }
+
+  let worker_hint = null;
+
+  if (status === 'queued') {
+    const queuedAt = progress?.queued_at ? new Date(progress.queued_at).getTime() : null;
+    if (queuedAt && Date.now() - queuedAt > 60 * 1000) {
+      worker_hint =
+        'Scan is queued. Make sure the Bull worker is running: cd backend && npm run worker';
+    } else {
+      worker_hint = 'Scan is waiting in the queue for the worker.';
+    }
+  } else if (status === 'unknown' && !keywordSet.last_scanned_at) {
+    worker_hint =
+      'No completed scan yet. Check Redis (redis-cli ping) and run the worker (npm run worker).';
+  } else if (status === 'failed' && progress?.message) {
+    worker_hint = progress.message;
+  }
+
+  return { status, worker_hint };
+}
+
 router.get('/:id/scan-status', async (req, res) => {
   try {
     const { id } = req.params;
@@ -181,30 +246,50 @@ router.get('/:id/scan-status', async (req, res) => {
     );
     const leadsFound = parseInt(leadsResult.rows[0].count, 10);
 
-    const lastScanned = keywordSet.last_scanned_at
-      ? new Date(keywordSet.last_scanned_at)
+    const { state: jobState } = await getManualScanJobState(id);
+    const { status, worker_hint } = resolveScanStatus(keywordSet, leadsFound, jobState);
+
+    const progress = keywordSet.scan_progress;
+    const queries = keywordSet.queries || [];
+    const subreddits = keywordSet.subreddits || [];
+
+    console.log(
+      `[scan-status] id=${id} status=${status} job=${jobState || 'none'} leads=${leadsFound}`
+    );
+
+    const diagnostics = progress
+      ? {
+          collected_raw: progress.collected_raw ?? null,
+          raw_global_count: progress.raw_global_count ?? null,
+          raw_subreddit_count: progress.raw_subreddit_count ?? null,
+          deduped_count: progress.deduped_count ?? null,
+          scored_count: progress.scored_count ?? null,
+          survivors_count: progress.survivors_count ?? null,
+          inserted_count: progress.inserted_count ?? progress.leads_saved ?? null,
+          duplicate_count: progress.duplicate_count ?? null,
+          reddit_error_count: progress.reddit_error_count ?? null,
+          reddit_auth_error: progress.reddit_auth_error ?? null,
+          last_reddit_error: progress.last_reddit_error ?? null,
+          threshold_used: progress.threshold_used ?? null,
+          filtered_out_count: progress.filtered_out_count ?? null,
+        }
       : null;
-
-    let status;
-    if (lastScanned) {
-      status = 'complete';
-    } else if (leadsFound > 0) {
-      status = 'complete';
-    } else {
-      status = 'scanning';
-    }
-
-    console.log(`[scan-status] id=${id} status=${status} leads=${leadsFound}`);
 
     return res.json({
       id: keywordSet.id,
       status,
+      job_state: jobState,
+      worker_hint,
       last_scanned_at: keywordSet.last_scanned_at,
       leads_found: leadsFound,
-      queries: keywordSet.queries || [],
-      subreddits: keywordSet.subreddits || [],
+      queries,
+      subreddits,
+      live_queries: queries,
+      live_subreddits: subreddits,
       product_description: keywordSet.product_description,
       scan_interval_hours: keywordSet.scan_interval_hours,
+      scan_progress: progress || null,
+      diagnostics,
     });
   } catch (err) {
     console.error('[scan-status] ERROR:', err);

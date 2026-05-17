@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run backend + frontend in one shell so one tab stays "alive" (better for Cursor / IDE process view).
+# Run backend API + Bull worker + frontend in one shell.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -12,11 +12,15 @@ cleanup() {
 }
 trap cleanup INT TERM
 
-echo "→ Backend http://localhost:3001  +  Frontend http://localhost:5173"
-echo "→ Press Ctrl+C to stop both."
+echo "→ Backend API:  http://localhost:3001"
+echo "→ Worker:       Bull scan worker (npm run dev:worker)"
+echo "→ Frontend:     http://localhost:5173"
+echo "→ Press Ctrl+C to stop all three."
 echo ""
 
-(cd "$ROOT/backend" && npm run dev) &
+# API only — worker runs in a separate process so jobs are not processed twice.
+(cd "$ROOT/backend" && SKIP_EMBEDDED_WORKERS=true npm run dev) &
+(cd "$ROOT/backend" && npm run dev:worker) &
 (cd "$ROOT/frontend" && npm run dev) &
 
 wait
