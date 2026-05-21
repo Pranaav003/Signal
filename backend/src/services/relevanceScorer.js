@@ -1,7 +1,9 @@
 /** @typedef {{ title?: string; body_snippet?: string; created_utc?: number; subreddit?: string; score?: number; relevance_score?: number; keyword_set?: { product_description?: string; subreddits?: string[]; queries?: string[] } }} ResultLike */
-/** @typedef {{ product_description?: string; subreddits?: string[]; queries?: string[] }} KeywordSetLike */
+/** @typedef {{ product_description?: string; subreddits?: string[]; queries?: string[]; search_brief?: object }} KeywordSetLike */
 
 const { extractPhrases } = require('./keywordProcessor');
+const { qualifyLead, getBrief } = require('./leadQualifier');
+const { LEAD_TYPE_LABELS } = require('../utils/leadVisibility');
 
 const stopWords = new Set([
   'a', 'an', 'the', 'for', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'of', 'with',
@@ -11,100 +13,40 @@ const stopWords = new Set([
 ]);
 
 const highIntentPhrases = [
+  'what should open',
+  'wish we had',
+  'why is there no',
+  'why don\'t we have',
+  'missing',
+  'need more',
+  'students need',
+  'students want',
+  'late night food',
+  'food options near',
+  'what restaurant',
+  'what business',
+  'what chain',
   'looking for',
-  'need a',
-  'need something',
   'recommend',
-  'recommendation',
-  'suggestions',
-  'anyone use',
-  'what do you use',
-  'what crm',
-  'what tool',
-  'which tool',
-  'which software',
-  'which app',
-  'best tool',
-  'best software',
-  'tired of',
-  'sick of',
-  'frustrated with',
-  'switching from',
-  'alternative to',
-  'alternatives to',
-  'instead of',
-  'replacing',
-  'help me find',
-  'help me choose',
-  'can anyone suggest',
-  'does anyone know',
-  'not getting applicants',
-  'hiring is',
-  'job posting',
-  'track net worth',
-  'portfolio',
 ];
 
 const mediumIntentPhrases = [
   'how do i',
-  'how do you',
   'anyone else',
   'is there a',
   'does anyone',
-  'any advice',
-  'any tips',
   'struggling with',
-  'issue with',
-  'problem with',
-  'confused',
-  'lost',
-  'not sure',
-  'wondering',
   'need help',
 ];
 
-const businessSubreddits = [
-  'entrepreneur',
-  'smallbusiness',
-  'startups',
-  'freelance',
-  'sideproject',
-  'saas',
-  'indiehackers',
-  'productivity',
-  'recruiting',
-  'humanresources',
-  'personalfinance',
-  'financialplanning',
-  'investing',
-];
-
-const offTopicSignals = [
-  'recipe',
-  'workout',
-  'skincare',
-  'makeup',
-  'fashion',
-  'dating',
-  'relationship',
-  'movie',
-  'music',
-  'gaming',
-  'phone',
-  'android',
-  'iphone',
-  'sunscreen',
-];
+const offTopicSignals = ['recipe', 'workout', 'skincare', 'dating', 'gaming'];
 
 function leadScoreThreshold() {
   const raw = Number.parseInt(process.env.LEAD_SCORE_THRESHOLD ?? '', 10);
   if (Number.isFinite(raw) && raw >= 0) return raw;
-  return process.env.NODE_ENV === 'production' ? 20 : 12;
+  return process.env.NODE_ENV === 'production' ? 35 : 30;
 }
 
-/**
- * @param {KeywordSetLike | null | undefined} keywordSet
- */
 function buildLeadContext(keywordSet = {}) {
   const description = String(keywordSet.product_description || '');
   const queryTerms = Array.isArray(keywordSet.queries)
@@ -132,14 +74,12 @@ function buildLeadContext(keywordSet = {}) {
     String(s || '').toLowerCase().replace(/^r\//, '')
   );
 
-  const allTerms = uniqueTerms([...productTerms, ...problemTerms, ...queryTerms]);
-
   return {
     product_terms: uniqueTerms(productTerms),
     problem_terms: uniqueTerms(problemTerms),
     query_terms: uniqueTerms(queryTerms),
     subreddit_targets: subredditTargets,
-    all_terms: allTerms,
+    all_terms: uniqueTerms([...productTerms, ...problemTerms, ...queryTerms]),
   };
 }
 
@@ -156,151 +96,171 @@ function uniqueTerms(list) {
 }
 
 /**
- * @param {ResultLike} result
- * @param {KeywordSetLike | null | undefined} keywordSet
- * @returns {{ score: number; reasons: string[] }}
+ * Cheap ranking score — does NOT grant subreddit-only or weak-intent boosts.
  */
-function scoreResultDetailed(result, keywordSet = {}) {
+function scoreInitialDetailed(result, keywordSet = {}) {
   const reasons = [];
-
   const title = (result.title || '').toLowerCase();
   const body = (result.body_snippet || '').toLowerCase();
   const fullText = `${title} ${body}`;
-  const subreddit = (result.subreddit || '').toLowerCase().replace(/^r\//, '');
+  const ctx = buildLeadContext(keywordSet);
 
-  const ks = keywordSet.product_description ? keywordSet : result.keyword_set ?? {};
-  const ctx = buildLeadContext(ks);
-
-  const matchedTerms = ctx.all_terms.filter((w) => fullText.includes(w));
-  const matchRatio = ctx.all_terms.length > 0 ? matchedTerms.length / ctx.all_terms.length : 0;
+  const matchedQueryTerms = ctx.query_terms.filter((w) => fullText.includes(w));
+  const matchedProductTerms = ctx.product_terms.filter((w) => fullText.includes(w));
 
   let score = 0;
 
-  if (matchedTerms.length >= 2) {
-    const pts = Math.min(matchedTerms.length * 5, 20);
+  if (matchedQueryTerms.length >= 2) {
+    const pts = Math.min(matchedQueryTerms.length * 5, 18);
     score += pts;
-    reasons.push(`Matches ${matchedTerms.length} monitor term(s) (+${pts} pts).`);
-  } else if (matchedTerms.length === 1) {
+    reasons.push(`Query overlap (+${pts}).`);
+  } else if (matchedQueryTerms.length === 1) {
     score += 6;
-    reasons.push('Matches 1 monitor term (+6 pts).');
-  } else if (matchRatio < 0.1 && ctx.all_terms.length > 0) {
-    score -= 5;
-    reasons.push('Low keyword overlap (−5 pts) — still scored on intent/subreddit.');
+    reasons.push('Partial query overlap (+6).');
   }
 
-  let intentScore = 0;
+  if (matchedProductTerms.length >= 1) {
+    const pts = Math.min(matchedProductTerms.length * 3, 10);
+    score += pts;
+    reasons.push(`Product terms (+${pts}).`);
+  }
+
   const highHits = highIntentPhrases.filter((p) => fullText.includes(p));
   const medHits = mediumIntentPhrases.filter((p) => fullText.includes(p));
-  highHits.forEach(() => {
-    intentScore += 6;
-  });
-  medHits.forEach(() => {
-    intentScore += 3;
-  });
-  const intentCapped = Math.min(intentScore, 30);
-  score += intentCapped;
-  if (intentCapped > 0) {
-    reasons.push(`Intent language (+${intentCapped} pts, capped at 30).`);
+  if (highHits.length) {
+    const pts = Math.min(highHits.length * 5, 15);
+    score += pts;
+    reasons.push(`Strong intent phrases (+${pts}).`);
+  } else if (medHits.length) {
+    score += Math.min(medHits.length * 2, 6);
+    reasons.push('Weak intent (+≤6).');
   }
 
-  if (title.includes('?')) {
-    score += 6;
-    reasons.push('Title asks a question (+6 pts).');
-  }
-  if (body.includes('?')) {
-    score += 4;
-    reasons.push('Body includes a question (+4 pts).');
-  }
-
-  const targetSubreddits = ctx.subreddit_targets;
-
-  if (
-    targetSubreddits.length &&
-    targetSubreddits.some(
-      (ts) => subreddit === ts || subreddit.includes(ts) || ts.includes(subreddit)
-    )
-  ) {
-    score += 15;
-    reasons.push('Posted in a target subreddit (+15 pts).');
-  } else if (businessSubreddits.some((s) => subreddit.includes(s))) {
-    score += 8;
-    reasons.push('Posted in a related business subreddit (+8 pts).');
-  } else if (targetSubreddits.length) {
-    score -= 4;
-    reasons.push('Subreddit not in target list (−4 pts).');
-  }
-
-  let tsSec = Number(result.created_utc ?? 0);
-  if (!Number.isFinite(tsSec) || tsSec <= 0) {
-    tsSec = NaN;
-  } else if (tsSec > 1e12) {
-    tsSec = Math.floor(tsSec / 1000);
-  }
-
-  let recencyPts = 0;
-  let recencyLabel = '';
-  if (!Number.isNaN(tsSec)) {
-    const ageHours = (Date.now() / 1000 - tsSec) / 3600;
-    if (ageHours >= 0) {
-      if (ageHours < 24) {
-        recencyPts = 14;
-        recencyLabel = 'under 24 hours old';
-      } else if (ageHours < 72) {
-        recencyPts = 8;
-        recencyLabel = 'under 3 days old';
-      } else if (ageHours < 168) {
-        recencyPts = 4;
-        recencyLabel = 'under 1 week old';
-      }
-    }
-  }
-  score += recencyPts;
-  if (recencyPts > 0) {
-    reasons.push(`Recency: ${recencyLabel} (+${recencyPts} pts).`);
-  }
+  if (title.includes('?')) score += 4;
 
   let offTopicPenalty = 0;
   offTopicSignals.forEach((s) => {
-    if (fullText.includes(s)) offTopicPenalty += 6;
+    if (fullText.includes(s)) offTopicPenalty += 5;
   });
-  if (offTopicPenalty > 0) {
-    score -= offTopicPenalty;
-    reasons.push(`Possible off-topic signals (−${offTopicPenalty} pts).`);
+  score -= offTopicPenalty;
+
+  return {
+    score: Math.max(0, Math.min(100, Math.round(score))),
+    reasons,
+    meta: { phase: 'initial' },
+  };
+}
+
+function buildQualificationReasons(qualification, initialScore) {
+  const reasons = [];
+  const src = qualification.classifier || qualification.source || 'unknown';
+  if (!qualification.is_lead) {
+    reasons.push(qualification.reject_reason || 'Rejected by lead qualification.');
+    reasons.push(`Initial rank score ${initialScore} — not saved (${src}).`);
+    return reasons;
   }
 
-  const finalScore = Math.max(0, Math.min(100, Math.round(score)));
-  reasons.push(`Total → ${finalScore} (threshold ${leadScoreThreshold()}).`);
+  reasons.push(`Lead accepted (${src}, confidence ${qualification.confidence}).`);
+  if (qualification.lead_type) {
+    const label = LEAD_TYPE_LABELS[qualification.lead_type] || qualification.lead_type;
+    reasons.push(`Lead type: ${label}`);
+  }
+  if (qualification.evidence) {
+    reasons.push(`Evidence: ${qualification.evidence}`);
+  }
+  if (qualification.recommended_visibility && qualification.recommended_visibility !== 'show') {
+    reasons.push(`Inbox visibility: ${qualification.recommended_visibility}`);
+  }
+  if (qualification.matched_positive_patterns?.length) {
+    reasons.push(`Matched pattern: ${qualification.matched_positive_patterns[0]}`);
+  }
+  if (qualification.matched_required_concepts?.length) {
+    reasons.push(
+      `Required evidence: ${qualification.matched_required_concepts.slice(0, 5).join(', ')}`
+    );
+  }
+  return reasons;
+}
 
-  return { score: finalScore, reasons };
+function computeFinalScore(initialScore, qualification) {
+  if (!qualification?.is_lead) {
+    if (process.env.SAVE_REJECTED_DEBUG === 'true') {
+      return Math.min(initialScore, 25);
+    }
+    return Math.min(initialScore, 25);
+  }
+  const blended = Math.round(initialScore * 0.35 + (qualification.confidence || 50) * 0.65);
+  return Math.max(leadScoreThreshold(), Math.min(100, blended));
+}
+
+/**
+ * Full score path (used when qualification already attached on candidate).
+ */
+function scoreResultDetailed(result, keywordSet = {}) {
+  const ks =
+    keywordSet.product_description || keywordSet.search_brief ? keywordSet : result.keyword_set ?? {};
+  const brief = getBrief(ks);
+
+  const initial =
+    typeof result.initial_score === 'number'
+      ? { score: result.initial_score, reasons: result.initial_reasons || [] }
+      : scoreInitialDetailed(result, ks);
+
+  const qualification =
+    result.qualification || qualifyLead(result, { ...brief, product_description: ks.product_description });
+
+  const finalScore = computeFinalScore(initial.score, qualification);
+  const reasons = [
+    ...buildQualificationReasons(qualification, initial.score),
+    `Final score: ${finalScore} (threshold ${leadScoreThreshold()}).`,
+  ];
+
+  return {
+    score: finalScore,
+    reasons,
+    meta: {
+      qualified: qualification.is_lead,
+      phase: 'final',
+      initial_score: initial.score,
+      reject_reason: qualification.reject_reason,
+      confidence: qualification.confidence,
+      lead_type: qualification.lead_type,
+      concept_groups: qualification.concept_groups,
+      classifier: qualification.classifier || 'rules',
+      source: String(result.platform || 'reddit').toLowerCase(),
+    },
+  };
+}
+
+function qualifiesAsLeadResult(result, keywordSet = {}) {
+  return qualifyLead(result, keywordSet);
 }
 
 function scoreResult(result, keywordSet = {}) {
   return scoreResultDetailed(result, keywordSet).score;
 }
 
-/**
- * @param {Array<ResultLike>} results
- * @param {KeywordSetLike | null | undefined} [keywordSet]
- */
 function filterLowSignal(results, keywordSet) {
   if (!Array.isArray(results)) return [];
-
-  const ks = keywordSet ?? {};
   const minScore = leadScoreThreshold();
-
   return results.filter((r) => {
     const s =
       typeof r.relevance_score === 'number' && !Number.isNaN(r.relevance_score)
         ? r.relevance_score
-        : scoreResult(r, ks);
-    return s >= minScore;
+        : scoreResult(r, keywordSet);
+    const qualified = r.qualification?.is_lead ?? r.score_meta?.qualified;
+    return qualified !== false && s >= minScore;
   });
 }
 
 module.exports = {
   scoreResult,
   scoreResultDetailed,
+  scoreInitialDetailed,
+  computeFinalScore,
+  buildQualificationReasons,
   filterLowSignal,
   leadScoreThreshold,
   buildLeadContext,
+  qualifiesAsLeadResult,
 };

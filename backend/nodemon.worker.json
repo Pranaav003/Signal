@@ -1,0 +1,5 @@
+{
+  "watch": ["src/jobs", "src/services"],
+  "ignore": ["src/routes/**", "index.js", "src/scripts/**"],
+  "ext": "js,json"
+}

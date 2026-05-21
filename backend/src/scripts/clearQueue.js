@@ -1,10 +1,16 @@
 require('dotenv').config();
 
-const { scanQueue, addScanJob } = require('../jobs/scanJob');
+const { scanQueue, manualScanQueue, addScanJob } = require('../jobs/scanJob');
 const pool = require('../db/connection');
 
 async function clearAndRequeue() {
   console.log('Cleaning queue...');
+
+  await manualScanQueue.clean(0, 'active');
+  await manualScanQueue.clean(0, 'failed');
+  await manualScanQueue.clean(0, 'delayed');
+  await manualScanQueue.empty();
+  console.log('✓ Manual scan queue cleared');
 
   await scanQueue.clean(0, 'active');
   await scanQueue.clean(0, 'failed');

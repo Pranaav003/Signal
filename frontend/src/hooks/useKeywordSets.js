@@ -13,7 +13,8 @@ export function useKeywordSets(userId) {
     try {
       const { data } = await api.get(`/api/keyword-sets/user/${userId}`)
 
-      setKeywordSets(Array.isArray(data) ? data : [])
+      const rows = Array.isArray(data) ? data : []
+      setKeywordSets(rows.filter((k) => k.active !== false && !k.deleted_at))
     } catch (e) {
       console.error('[useKeywordSets] refresh', e)
       setKeywordSets([])
@@ -35,7 +36,10 @@ export function useKeywordSets(userId) {
       try {
         const { data } = await api.get(`/api/keyword-sets/user/${userId}`)
 
-        if (!cancelled) setKeywordSets(Array.isArray(data) ? data : [])
+        if (!cancelled) {
+          const rows = Array.isArray(data) ? data : []
+          setKeywordSets(rows.filter((k) => k.active !== false && !k.deleted_at))
+        }
       } catch (e) {
         console.error('[useKeywordSets] initial load', e)
         if (!cancelled) setKeywordSets([])
@@ -87,10 +91,12 @@ export function useKeywordSets(userId) {
 
   const deleteKeywordSet = useCallback(
     async (id) => {
-      await api.delete(`/api/keyword-sets/${id}`)
+      if (!userId) throw new Error('missing userId')
+      await api.delete(`/api/keyword-sets/${id}`, { params: { user_id: userId } })
+      setKeywordSets((prev) => prev.filter((k) => k.id !== id))
       await refresh()
     },
-    [refresh]
+    [userId, refresh]
   )
 
   const updateKeywordSet = useCallback(async (id, payload) => {

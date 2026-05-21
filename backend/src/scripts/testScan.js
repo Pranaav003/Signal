@@ -40,7 +40,7 @@ async function main() {
     }
     keywordSet = rows[0];
   } else if (description) {
-    const g = generateQueries(description);
+    const g = await generateQueries(description);
     keywordSet = {
       id: '00000000-0000-0000-0000-000000000001',
       user_id: null,

@@ -3,21 +3,47 @@ const express = require('express');
 const pool = require('../db/connection');
 const { generateDraft } = require('../services/draftService');
 const { scoreResultDetailed } = require('../services/relevanceScorer');
+const { parseIncludeParam, buildVisibilitySql } = require('../utils/leadVisibility');
 
 const router = express.Router();
 
-router.get('/user/:userId', async (req, res) => {
-  const { seen, sort, limit } = req.query ?? {};
+function normalizeScoreReasons(value) {
+  if (Array.isArray(value)) return value.map(String);
+  if (value && typeof value === 'object') {
+    try {
+      return [JSON.stringify(value)];
+    } catch {
+      return [];
+    }
+  }
+  if (typeof value === 'string' && value.trim()) return [value];
+  return [];
+}
 
-  console.log('[leads] fetching for userId:', req.params.userId);
-  console.log('[leads] query params:', req.query);
+function normalizeLeadRow(row) {
+  const out = { ...row };
+  if (out.created_at instanceof Date) {
+    out.created_at = out.created_at.toISOString();
+  }
+  out.score_reasons = normalizeScoreReasons(out.score_reasons);
+  if (out.qualification && typeof out.qualification === 'string') {
+    try {
+      out.qualification = JSON.parse(out.qualification);
+    } catch {
+      out.qualification = {};
+    }
+  }
+  return out;
+}
+
+router.get('/user/:userId', async (req, res) => {
+  const { seen, sort, limit, active_only, include } = req.query ?? {};
 
   const limitNum = Math.min(
     Math.max(parseInt(limit != null ? String(limit) : '500', 10) || 500, 1),
     500
   );
 
-  /** Whitelist ORDER BY fragments only — default aligns with Reddit score UX */
   const orderClause =
     sort === 'created' ? `l.created_at DESC` : `l.relevance_score DESC`;
 
@@ -35,16 +61,25 @@ router.get('/user/:userId', async (req, res) => {
     )`,
   ];
 
+  if (active_only !== 'false') {
+    parts.push('COALESCE(l.is_active, true) = true');
+    parts.push('l.deleted_at IS NULL');
+    parts.push('COALESCE(ks.active, true) = true');
+    parts.push('ks.deleted_at IS NULL');
+  }
+
   if (seen === 'false') {
     parts.push('l.seen = false');
   } else if (seen === 'true') {
     parts.push('l.seen = true');
   }
 
+  const includeParsed = parseIncludeParam(include);
+  const visibilitySql = buildVisibilitySql(includeParsed, params);
+  parts.push(visibilitySql.clause);
+
   params.push(limitNum);
   const limitIdx = params.length;
-
-  const whereClause = parts.join(' AND ');
 
   try {
     const result = await pool.query(
@@ -52,25 +87,38 @@ router.get('/user/:userId', async (req, res) => {
       SELECT l.*, ks.product_description AS monitor_name
       FROM leads l
       JOIN keyword_sets ks ON l.keyword_set_id = ks.id
-      WHERE ${whereClause}
+      WHERE ${parts.join(' AND ')}
       ORDER BY ${orderClause}
       LIMIT $${limitIdx}
       `,
       params
     );
 
-    console.log('[leads] returning', result.rows.length, 'leads');
-
-    return res.json({ leads: result.rows, total: result.rows.length });
+    const leads = result.rows.map(normalizeLeadRow);
+    return res.json({ leads, total: leads.length });
   } catch (err) {
     console.error('[leads] GET /user/:userId', err);
     if (err && err.code === '42P01') {
       return res.status(503).json({
-        error:
+        error: 'leads_fetch_failed',
+        message:
           'Database schema mismatch. Run migrations from the backend folder: node src/db/migrate.js',
       });
     }
-    return res.status(500).json({ error: 'Failed to fetch leads' });
+    if (err && err.code === '42703') {
+      return res.status(503).json({
+        error: 'leads_fetch_failed',
+        message: `Missing column: ${err.message}. Run: npm run migrate`,
+      });
+    }
+    return res.status(500).json({
+      error: 'leads_fetch_failed',
+      message:
+        process.env.NODE_ENV === 'production'
+          ? 'Failed to fetch leads'
+          : err.message,
+      stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
+    });
   }
 });
 
@@ -82,7 +130,7 @@ router.get('/:id/why', async (req, res) => {
 
   try {
     const leadResult = await pool.query(
-      `SELECT l.*, ks.product_description, ks.queries, ks.subreddits
+      `SELECT l.*, ks.product_description, ks.queries, ks.subreddits, ks.search_brief
        FROM leads l
        JOIN keyword_sets ks ON l.keyword_set_id = ks.id
        WHERE l.id = $1 AND l.user_id = $2`,
@@ -94,11 +142,15 @@ router.get('/:id/why', async (req, res) => {
       return res.status(404).json({ error: 'Lead not found' });
     }
 
-    const stored = row.score_reasons;
-    if (Array.isArray(stored) && stored.length > 0) {
+    const qual = row.qualification && typeof row.qualification === 'object' ? row.qualification : {};
+    const stored = normalizeScoreReasons(row.score_reasons);
+
+    if (stored.length > 0) {
       return res.json({
         score: Number(row.relevance_score) || 0,
         reasons: stored,
+        qualification: qual,
+        source: qual.source || null,
       });
     }
 
@@ -106,6 +158,7 @@ router.get('/:id/why', async (req, res) => {
       product_description: row.product_description,
       queries: row.queries,
       subreddits: row.subreddits,
+      search_brief: row.search_brief,
     };
 
     const { score, reasons } = scoreResultDetailed(
@@ -116,14 +169,18 @@ router.get('/:id/why', async (req, res) => {
         created_utc: row.created_utc,
         upvotes: row.upvotes,
         comment_count: row.comment_count,
+        qualification: qual,
       },
       keywordSet
     );
 
-    return res.json({ score, reasons });
+    return res.json({ score, reasons, qualification: qual });
   } catch (err) {
     console.error('[leads] GET /:id/why', err);
-    return res.status(500).json({ error: 'Failed to explain score' });
+    return res.status(500).json({
+      error: 'Failed to explain score',
+      message: process.env.NODE_ENV === 'production' ? undefined : err.message,
+    });
   }
 });
 
@@ -195,7 +252,7 @@ router.patch('/:id/seen', async (req, res) => {
       return res.status(404).json({ error: 'Lead not found' });
     }
 
-    return res.json(rows[0]);
+    return res.json(normalizeLeadRow(rows[0]));
   } catch (err) {
     console.error('[leads] PATCH /:id/seen', err);
     return res.status(500).json({ error: 'Failed to update lead' });
@@ -213,7 +270,7 @@ router.patch('/:id/unseen', async (req, res) => {
       return res.status(404).json({ error: 'Lead not found' });
     }
 
-    return res.json(rows[0]);
+    return res.json(normalizeLeadRow(rows[0]));
   } catch (err) {
     console.error('[leads] PATCH /:id/unseen', err);
     return res.status(500).json({ error: 'Failed to update lead' });

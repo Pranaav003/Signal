@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('./src/config/loadEnv');
 
 require('./src/db/connection');
 
@@ -99,7 +99,7 @@ app.use((err, req, res, _next) => {
   res.status(500).json({ error: err && err.message ? err.message : 'Internal Server Error' });
 });
 
-app.listen(port, () => {
+const server = app.listen(port, () => {
   console.log(`Signal backend running on port ${port}`);
 
   if (process.env.SKIP_EMBEDDED_WORKERS !== 'true') {
@@ -121,4 +121,15 @@ app.listen(port, () => {
       err && err.message ? err.message : err
     );
   });
+});
+
+server.on('error', (err) => {
+  if (err && err.code === 'EADDRINUSE') {
+    console.error(
+      `[api] Port ${port} is already in use. Stop the other process (lsof -i :${port}) or run only one API instance.`
+    );
+    process.exit(1);
+  }
+  console.error('[api] Server error:', err);
+  process.exit(1);
 });

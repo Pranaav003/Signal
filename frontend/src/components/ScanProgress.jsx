@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { api } from '../lib/api'
-import { formatZeroLeadsDiagnostic } from '../lib/scanDiagnostics'
+import {
+  formatZeroLeadsDiagnostic,
+  formatLowLeadsDiagnostic,
+  formatAiSourceSummary,
+} from '../lib/scanDiagnostics'
 
 const PHASES = [
   {
@@ -100,6 +104,8 @@ const safeAt = (arr, idx, fb) => arr?.[idx] || fb
 const POLL_INTERVAL_MS = 8000
 const POLL_ERROR_MS = 10_000
 const POLL_RATE_LIMIT_MS = 30_000
+const POLL_QUEUED_MS = 10_000
+const POLL_STUCK_MS = 30_000
 
 const TERMINAL_SCAN_STATUSES = new Set([
   'complete',
@@ -148,6 +154,7 @@ export default function ScanProgress({
   keywordSet,
   onComplete,
   onScanComplete,
+  onScanReady,
   estimatedTotalMs: estimatedTotalMsProp,
 }) {
   const keywordSetId = keywordSet?.id ?? null
@@ -157,9 +164,12 @@ export default function ScanProgress({
   const [queriesShown, setQueriesShown] = useState(0)
   const [subsShown, setSubsShown] = useState(0)
   const [leadsFound, setLeadsFound] = useState(0)
+  const [leadsLabel, setLeadsLabel] = useState('LEADS FOUND')
   const [showEscape, setShowEscape] = useState(false)
   const [workerHint, setWorkerHint] = useState('')
   const [terminalResult, setTerminalResult] = useState(null)
+  const [manualCheckDetail, setManualCheckDetail] = useState(null)
+  const [retrying, setRetrying] = useState(false)
 
   const mountedRef = useRef(true)
   const phaseRef = useRef(0)
@@ -167,6 +177,9 @@ export default function ScanProgress({
   const linesRef = useRef([])
   const completedRef = useRef(false)
   const leadsFoundRef = useRef(0)
+  const lastProgressRef = useRef(null)
+  const lastJobStateRef = useRef(null)
+  const lastInsertedPollRef = useRef(0)
   const waitingLinesRef = useRef(0)
   const sequenceDoneRef = useRef(false)
   const lastWaitingLineRef = useRef(0)
@@ -341,6 +354,23 @@ export default function ScanProgress({
     onComplete?.()
   }
 
+  const handleRescan = async () => {
+    if (!keywordSetId || retrying) return
+    setRetrying(true)
+    try {
+      await api.post(`/api/keyword-sets/${keywordSetId}/rescan`)
+      appendRawLine('system', 'Scan re-queued. Waiting for worker…')
+      lastStatusRef.current = 'queued'
+    } catch (e) {
+      appendRawLine(
+        'warn',
+        e?.response?.data?.message || e?.message || 'Could not re-queue scan.'
+      )
+    } finally {
+      setRetrying(false)
+    }
+  }
+
   useEffect(() => {
     if (!keywordSet?.id) return undefined
 
@@ -360,6 +390,7 @@ export default function ScanProgress({
     completedRef.current = false
     pollCancelledRef.current = false
     setTerminalResult(null)
+    setManualCheckDetail(null)
     setShowEscape(false)
     setWorkerHint('')
 
@@ -429,7 +460,13 @@ export default function ScanProgress({
       ) {
         setShowEscape(true)
       }
-      if (elapsed > 1500 && !terminalResultRef.current && !hardTimeoutFiredRef.current) {
+      if (
+        elapsed > 1500 &&
+        !terminalResultRef.current &&
+        !hardTimeoutFiredRef.current &&
+        lastStatusRef.current !== 'scanning' &&
+        !['queued', 'stuck'].includes(lastStatusRef.current)
+      ) {
         hardTimeoutFiredRef.current = true
         applyTerminalResult({
           status: 'stuck',
@@ -446,24 +483,69 @@ export default function ScanProgress({
     let cancelled = false
 
     ;(async () => {
+      let data = null
       try {
-        const { data } = await api.get(`/api/keyword-sets/${keywordSetId}/scan-status`)
+        const res = await api.get(`/api/keyword-sets/${keywordSetId}/scan-status`)
+        data = res.data
         if (cancelled || !mountedRef.current) return
-        if (Array.isArray(data?.live_queries) && data.live_queries.length) {
-          ctxRef.current.queries = data.live_queries
-          setQueriesShown(data.live_queries.length)
+        const qList =
+          Array.isArray(data?.live_queries) && data.live_queries.length
+            ? data.live_queries
+            : keywordSet.queries || []
+        const sList =
+          Array.isArray(data?.live_subreddits) && data.live_subreddits.length
+            ? data.live_subreddits
+            : keywordSet.subreddits || []
+        if (qList.length) {
+          ctxRef.current.queries = qList
+          setQueriesShown(qList.length)
+        } else if (Number(data?.query_count) > 0) {
+          setQueriesShown(Number(data.query_count))
         }
-        if (Array.isArray(data?.live_subreddits) && data.live_subreddits.length) {
-          ctxRef.current.subreddits = data.live_subreddits
-          setSubsShown(data.live_subreddits.length)
+        if (sList.length) {
+          ctxRef.current.subreddits = sList
+          setSubsShown(sList.length)
+        } else if (Number(data?.subreddit_count) > 0) {
+          setSubsShown(Number(data.subreddit_count))
         }
         const qn = ctxRef.current.queries.length || 10
         const sn = ctxRef.current.subreddits.length || 5
         ctxRef.current.estimatedTotalMs = Math.min(qn * sn, capPairs) * perMs
       } catch (e) {
+        if (e?.response?.status === 404) {
+          pollCancelledRef.current = true
+          applyTerminalResult({
+            status: 'failed',
+            leadsFound: Number(leadsFoundRef.current || 0),
+            message:
+              e?.response?.data?.message ||
+              'This monitor is no longer active. Select your current monitor from the sidebar.',
+          })
+          return
+        }
         console.error('[ScanProgress] poll error:', e)
       }
-      if (cancelled || !mountedRef.current) return
+      if (cancelled || !mountedRef.current || !data) return
+
+      const initialStatus = String(data?.status || 'scanning')
+      lastStatusRef.current = initialStatus
+      if (data?.worker_hint) {
+        workerHintRef.current = String(data.worker_hint)
+        setWorkerHint(workerHintRef.current)
+      }
+
+      if (initialStatus === 'queued' || initialStatus === 'stuck') {
+        sequenceDoneRef.current = true
+        setSequenceDone(true)
+        startWaitingPulse()
+        appendRawLine(
+          'warn',
+          data?.worker_hint || 'Queued — waiting for the worker to pick up this scan.'
+        )
+        appendRawLine('system', 'The scan has not started yet. No Reddit collection is running.')
+        return
+      }
+
       runPhaseSequence()
     })()
 
@@ -505,7 +587,68 @@ export default function ScanProgress({
 
         const status = String(data?.status || 'scanning')
         lastStatusRef.current = status
+        lastJobStateRef.current = data?.job_state || null
+
+        if (Number(data?.query_count) > 0) {
+          setQueriesShown(Number(data.query_count))
+        }
+        if (Number(data?.subreddit_count) > 0) {
+          setSubsShown(Number(data.subreddit_count))
+        }
+
+        if (status === 'queued' || status === 'stuck') {
+          if (data?.worker_hint) {
+            workerHintRef.current = String(data.worker_hint)
+            setWorkerHint(workerHintRef.current)
+          }
+          if (!queuedLineShownRef.current) {
+            queuedLineShownRef.current = true
+            appendRawLine(
+              'warn',
+              data.worker_hint ||
+                (status === 'stuck'
+                  ? 'Worker is not processing this scan.'
+                  : 'Queued — waiting for worker.')
+            )
+            appendRawLine('system', 'The scan has not started yet.')
+          }
+          schedulePoll(status === 'stuck' ? POLL_STUCK_MS : POLL_QUEUED_MS)
+          return
+        }
+        lastProgressRef.current = data?.scan_progress || null
         hasLastScannedRef.current = Boolean(data?.last_scanned_at)
+
+        const progress = data?.scan_progress
+        const collectedRaw = Number(progress?.collected_raw || progress?.raw_candidates || 0)
+        const rawSeen = Number(progress?.raw_seen_total || 0)
+        const rawTruncated = Boolean(progress?.raw_truncated)
+        const insertedLive = Number(progress?.inserted_count ?? progress?.leads_saved ?? 0)
+        if (status === 'scanning' && (collectedRaw > 0 || insertedLive > 0)) {
+          const display = insertedLive > 0 ? insertedLive : collectedRaw
+          leadsFoundRef.current = display
+          setLeadsFound(display)
+          const rawLabel =
+            insertedLive > 0
+              ? 'LEADS SAVED'
+              : rawTruncated && rawSeen > collectedRaw
+                ? `RAW ${collectedRaw}/${rawSeen}`
+                : 'RAW COLLECTED'
+          setLeadsLabel(rawLabel)
+          if (leadsCounterRef.current) {
+            leadsCounterRef.current.textContent = String(display)
+          }
+          if (insertedLive > lastInsertedPollRef.current) {
+            lastInsertedPollRef.current = insertedLive
+            onScanComplete?.()
+            if (!stallHintShownRef.current) {
+              stallHintShownRef.current = true
+              appendRawLine(
+                'success',
+                `${insertedLive} lead${insertedLive === 1 ? '' : 's'} saved — open the All tab to view them.`
+              )
+            }
+          }
+        }
         if (data?.worker_hint) {
           workerHintRef.current = String(data.worker_hint)
           setWorkerHint(workerHintRef.current)
@@ -516,21 +659,59 @@ export default function ScanProgress({
             data?.leads_found ?? data?.scan_progress?.leads_saved ?? data?.scan_progress?.inserted_count ?? 0
           )
           const zeroHint = leadsN === 0 ? formatZeroLeadsDiagnostic(data) : null
+          const lowHint = leadsN > 0 && leadsN < 5 ? formatLowLeadsDiagnostic(data, leadsN) : null
+          const diagnostic = zeroHint || lowHint
+          try {
+            await onScanComplete?.()
+          } catch (refreshErr) {
+            console.error('[ScanProgress] lead refresh on complete:', refreshErr)
+          }
           applyTerminalResult({
             status: 'complete',
             leadsFound: leadsN,
-            message: zeroHint || data?.scan_progress?.message || 'Scan complete',
-            diagnostic: zeroHint,
+            message: diagnostic || data?.scan_progress?.diagnostic_summary || data?.scan_progress?.message || 'Scan complete',
+            diagnostic,
+            aiSource: formatAiSourceSummary(data),
+            classifierWarning: data?.classifier_warning || null,
           })
+          await onScanReady?.({ status: 'complete', leadsFound: leadsN })
           return
         }
 
         if (status === 'failed' || status === 'error') {
+          const leadsNFailed = Number(
+            data?.leads_found ??
+              data?.current_scan_inserted_count ??
+              data?.scan_progress?.leads_saved ??
+              data?.scan_progress?.inserted_count ??
+              0
+          )
           const failMsg = String(
             data.worker_hint ||
               (data.scan_progress && data.scan_progress.message) ||
               'Scan failed. Check backend logs.'
           )
+          const recoverableFailed =
+            leadsNFailed > 0 &&
+            !/Lead cap violated|AI classifier required/i.test(failMsg) &&
+            (/Bull job is still active|diagnostics consistency/i.test(failMsg) ||
+              String(data?.scan_progress?.phase || '').toLowerCase() === 'complete')
+          if (recoverableFailed) {
+            try {
+              await onScanComplete?.()
+            } catch (refreshErr) {
+              console.error('[ScanProgress] lead refresh on recovered complete:', refreshErr)
+            }
+            applyTerminalResult({
+              status: 'complete',
+              leadsFound: leadsNFailed,
+              message: 'Scan complete — leads saved for this run.',
+              aiSource: formatAiSourceSummary(data),
+              classifierWarning: data?.classifier_warning || null,
+            })
+            await onScanReady?.({ status: 'complete', leadsFound: leadsNFailed })
+            return
+          }
           if (/429|too many requests/i.test(failMsg)) {
             if (!rateLimitHintShownRef.current) {
               rateLimitHintShownRef.current = true
@@ -542,30 +723,20 @@ export default function ScanProgress({
             schedulePoll(POLL_RATE_LIMIT_MS)
             return
           }
+          try {
+            await onScanComplete?.()
+          } catch (refreshErr) {
+            console.error('[ScanProgress] lead refresh on failed:', refreshErr)
+          }
           applyTerminalResult({
             status: 'failed',
             leadsFound: Number(data?.leads_found || 0),
             message: failMsg,
           })
-          return
-        }
-
-        if (status === 'queued') {
-          if (!queuedLineShownRef.current) {
-            queuedLineShownRef.current = true
-            appendRawLine(
-              'system',
-              data.worker_hint || 'Scan is queued. Waiting for worker…'
-            )
-          }
-          if (Number(data?.leads_found || 0) > leadsFoundRef.current) {
-            leadsFoundRef.current = Number(data?.leads_found || 0)
-            setLeadsFound(leadsFoundRef.current)
-            if (leadsCounterRef.current) {
-              leadsCounterRef.current.textContent = String(leadsFoundRef.current)
-            }
-          }
-          schedulePoll(8000)
+          await onScanReady?.({
+            status: 'failed',
+            leadsFound: Number(data?.leads_found || 0),
+          })
           return
         }
 
@@ -635,6 +806,14 @@ export default function ScanProgress({
         if (!mountedRef.current || pollCancelledRef.current) return
 
         if (e?.response?.status === 404) {
+          pollCancelledRef.current = true
+          applyTerminalResult({
+            status: 'failed',
+            leadsFound: Number(leadsFoundRef.current || 0),
+            message:
+              e?.response?.data?.message ||
+              'This monitor is no longer active. Select your current monitor from the sidebar.',
+          })
           return
         }
 
@@ -693,25 +872,22 @@ export default function ScanProgress({
       <div style={{ maxWidth: 680, margin: '0 auto' }}>
         <div className="flex items-center justify-between gap-4">
           <div className="flex items-center gap-2">
-            <span
-              className={headerDone ? '' : 'signal-track-dot'}
-              style={
-                headerDone
-                  ? {
-                      width: 6,
-                      height: 6,
-                      borderRadius: '50%',
-                      display: 'inline-block',
-                      background:
-                        terminalResult?.status === 'failed'
-                          ? '#e55'
-                          : terminalResult?.status === 'stuck'
-                            ? 'var(--yellow)'
-                            : 'var(--text-3)',
-                    }
-                  : undefined
-              }
-            />
+            {headerDone ? (
+              <span
+                style={{
+                  width: 6,
+                  height: 6,
+                  borderRadius: '50%',
+                  display: 'inline-block',
+                  background:
+                    terminalResult?.status === 'failed'
+                      ? '#e55'
+                      : terminalResult?.status === 'stuck'
+                        ? 'var(--yellow)'
+                        : 'var(--text-3)',
+                }}
+              />
+            ) : null}
             <span
               className="font-mono"
               style={{
@@ -721,7 +897,7 @@ export default function ScanProgress({
                   ? terminalResult?.status === 'complete'
                     ? 'var(--text-3)'
                     : 'var(--yellow)'
-                  : 'var(--green)',
+                  : 'var(--accent)',
               }}
             >
               {headerStatus}
@@ -786,8 +962,24 @@ export default function ScanProgress({
         {showEscape && !terminalResult && (
           <div className="mt-4 rounded-lg border px-4 py-3" style={{ borderColor: 'var(--border)' }}>
             <p className="m-0 font-mono text-[11px]" style={{ color: 'var(--yellow)' }}>
-              {workerHint ||
-                'This scan appears queued or stuck. Make sure the worker is running (cd backend && npm run worker).'}
+              {(() => {
+                const p = lastProgressRef.current
+                const collected = Number(p?.collected_raw || 0)
+                const pair =
+                  p?.pair_index && p?.pairs_total
+                    ? ` (${p.pair_index}/${p.pairs_total} subreddit pairs)`
+                    : ''
+                if (lastStatusRef.current === 'scanning' && lastJobStateRef.current === 'active') {
+                  if (collected > 0) {
+                    return `${collected} raw candidates collected${pair}. Leads are saved when the scan finishes (Reddit rate limits can make this take 15–25 min).`
+                  }
+                  return 'Worker is still scanning. Large monitors can take 15–25 minutes when Reddit rate-limits requests.'
+                }
+                return (
+                  workerHint ||
+                  'This scan appears queued or stuck. Make sure the worker is running (cd backend && npm run worker).'
+                )
+              })()}
             </p>
             <button
               type="button"
@@ -818,6 +1010,16 @@ export default function ScanProgress({
                 <p className="mt-2 mb-0 font-mono text-[12px]" style={{ color: 'var(--text-2)' }}>
                   {terminalResult.leadsFound} leads found
                 </p>
+                {terminalResult.aiSource ? (
+                  <p className="mt-2 mb-0 font-mono text-[11px]" style={{ color: 'var(--text-2)' }}>
+                    {terminalResult.aiSource}
+                  </p>
+                ) : null}
+                {terminalResult.classifierWarning ? (
+                  <p className="mt-2 mb-0 font-mono text-[11px]" style={{ color: 'var(--yellow)' }}>
+                    {terminalResult.classifierWarning}
+                  </p>
+                ) : null}
                 {terminalResult.diagnostic ? (
                   <p className="mt-2 mb-0 font-mono text-[11px]" style={{ color: 'var(--yellow)' }}>
                     {terminalResult.diagnostic}
@@ -832,10 +1034,17 @@ export default function ScanProgress({
                     background: 'rgba(124,106,247,0.12)',
                     cursor: 'pointer',
                   }}
-                  onClick={handleNavigateToLeads}
+                  onClick={() => {
+                    void handleNavigateToLeads()
+                  }}
                 >
                   View leads
                 </button>
+                {terminalResult.leadsFound > 0 ? (
+                  <p className="mt-2 mb-0 font-mono text-[11px]" style={{ color: 'var(--text-2)' }}>
+                    Leads are on the All tab for this monitor.
+                  </p>
+                ) : null}
               </>
             )}
             {terminalResult.status === 'failed' && (
@@ -888,54 +1097,150 @@ export default function ScanProgress({
         )}
 
         {!terminalResult && sequenceDone && scanSeconds >= 120 && (
-          <button
-            type="button"
-            onClick={async () => {
-              try {
-                const { data } = await api.get(
-                  `/api/keyword-sets/${keywordSetId}/scan-status`
-                )
-                if (data.status === 'complete' || data.status === 'completed') {
-                  applyTerminalResult({
-                    status: 'complete',
-                    leadsFound: Number(
-                      data.leads_found ?? data.scan_progress?.leads_saved ?? 0
-                    ),
-                    message: data.scan_progress?.message || 'Scan complete',
-                  })
-                } else if (data.status === 'failed' || data.status === 'error') {
-                  applyTerminalResult({
-                    status: 'failed',
-                    leadsFound: Number(data.leads_found || 0),
-                    message:
-                      data.worker_hint ||
-                      data.scan_progress?.message ||
-                      'Scan failed.',
-                  })
-                } else {
-                  window.alert(
-                    `Status: ${data.status}, Job: ${data.job_state || 'n/a'}, Leads: ${data.leads_found}\n${data.worker_hint || ''}`
+          <div className="mt-4 flex flex-wrap gap-2">
+            <button
+              type="button"
+              className="signal-btn-focus rounded-md border px-4 py-2 font-mono text-[11px]"
+              style={{
+                borderColor: 'var(--border)',
+                color: 'var(--text-3)',
+                background: 'transparent',
+                cursor: 'pointer',
+              }}
+              onClick={async () => {
+                try {
+                  const { data } = await api.get(
+                    `/api/keyword-sets/${keywordSetId}/scan-status`
                   )
+                  if (data.status === 'complete' || data.status === 'completed') {
+                    const leadsN = Number(
+                      data.leads_found ?? data.scan_progress?.leads_saved ?? 0
+                    )
+                    try {
+                      await onScanComplete?.()
+                    } catch (refreshErr) {
+                      console.error('[ScanProgress] manual check refresh:', refreshErr)
+                    }
+                    applyTerminalResult({
+                      status: 'complete',
+                      leadsFound: leadsN,
+                      message: data.scan_progress?.message || 'Scan complete',
+                    })
+                    await onScanReady?.({ status: 'complete', leadsFound: leadsN })
+                  } else if (data.status === 'failed' || data.status === 'error') {
+                    const leadsNManual = Number(
+                      data.leads_found ??
+                        data.current_scan_inserted_count ??
+                        data.scan_progress?.leads_saved ??
+                        0
+                    )
+                    const failMsgManual = String(
+                      data.worker_hint ||
+                        data.scan_progress?.message ||
+                        'Scan failed.'
+                    )
+                    const recoverableManual =
+                      leadsNManual > 0 &&
+                      !/Lead cap violated|AI classifier required/i.test(failMsgManual) &&
+                      (/Bull job is still active|diagnostics consistency/i.test(
+                        failMsgManual
+                      ) ||
+                        String(data?.scan_progress?.phase || '').toLowerCase() === 'complete')
+                    try {
+                      await onScanComplete?.()
+                    } catch (refreshErr) {
+                      console.error('[ScanProgress] manual check refresh:', refreshErr)
+                    }
+                    if (recoverableManual) {
+                      applyTerminalResult({
+                        status: 'complete',
+                        leadsFound: leadsNManual,
+                        message: 'Scan complete — leads saved for this run.',
+                      })
+                      await onScanReady?.({
+                        status: 'complete',
+                        leadsFound: leadsNManual,
+                      })
+                    } else {
+                      applyTerminalResult({
+                        status: 'failed',
+                        leadsFound: leadsNManual,
+                        message: failMsgManual,
+                      })
+                      await onScanReady?.({
+                        status: 'failed',
+                        leadsFound: leadsNManual,
+                      })
+                    }
+                  } else {
+                    setManualCheckDetail({
+                      status: data.status,
+                      job_state: data.job_state,
+                      worker_state: data.worker_state,
+                      leads_found: data.leads_found,
+                      current_scan_inserted_count: data.current_scan_inserted_count,
+                      active_monitor_lead_count: data.active_monitor_lead_count,
+                      queued_for_seconds: data.queued_for_seconds,
+                      worker_hint: data.worker_hint,
+                      classifier_warning: data.classifier_warning,
+                    })
+                  }
+                } catch (e) {
+                  console.error('[ScanProgress] manual check error:', e)
                 }
-              } catch (e) {
-                console.error('[ScanProgress] manual check error:', e)
-              }
-            }}
-            style={{
-              marginTop: 16,
-              padding: '6px 16px',
-              background: 'transparent',
-              border: '1px solid var(--border)',
-              color: 'var(--text-3)',
-              fontFamily: 'IBM Plex Mono',
-              fontSize: 11,
-              borderRadius: 6,
-              cursor: 'pointer',
-            }}
-          >
-            Check for results
-          </button>
+              }}
+            >
+              Check for results
+            </button>
+            <button
+              type="button"
+              className="signal-btn-focus rounded-md border px-4 py-2 font-mono text-[11px]"
+              style={{
+                borderColor: 'var(--accent)',
+                color: 'var(--accent)',
+                background: 'rgba(124,106,247,0.12)',
+                cursor: retrying ? 'wait' : 'pointer',
+              }}
+              disabled={retrying}
+              onClick={() => {
+                void handleRescan()
+              }}
+            >
+              {retrying ? 'Re-queueing...' : 'Retry scan'}
+            </button>
+          </div>
         )}
+
+        {manualCheckDetail ? (
+          <div
+            className="mt-4 rounded-lg border px-4 py-3 font-mono text-[11px]"
+            style={{ borderColor: 'var(--border)', background: 'var(--bg-2)' }}
+          >
+            <p className="m-0" style={{ color: 'var(--text-2)' }}>
+              Status: {manualCheckDetail.status}, Job: {manualCheckDetail.job_state || 'n/a'},
+              Worker: {manualCheckDetail.worker_state || 'unknown'}, This scan:{' '}
+              {manualCheckDetail.current_scan_inserted_count ??
+                manualCheckDetail.leads_found ??
+                0}
+              {manualCheckDetail.active_monitor_lead_count != null
+                ? `, Active monitor: ${manualCheckDetail.active_monitor_lead_count}`
+                : ''}
+              {manualCheckDetail.queued_for_seconds != null
+                ? `, Queued ${manualCheckDetail.queued_for_seconds}s`
+                : ''}
+            </p>
+            {manualCheckDetail.classifier_warning ? (
+              <p className="mt-2 mb-0" style={{ color: 'var(--yellow)' }}>
+                {manualCheckDetail.classifier_warning}
+              </p>
+            ) : null}
+            {manualCheckDetail.worker_hint ? (
+              <p className="mt-2 mb-0" style={{ color: 'var(--yellow)' }}>
+                {manualCheckDetail.worker_hint}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         <div className="mt-8 grid grid-cols-3 gap-3">
           <div className="rounded-lg border px-5 py-3" style={{ background: 'var(--bg-2)', borderColor: 'var(--border)' }}>
@@ -950,7 +1255,7 @@ export default function ScanProgress({
             <div ref={leadsCounterRef} className="font-mono font-bold tabular-nums" style={{ fontSize: 24, color: 'var(--accent)' }}>
               {leadsFound}
             </div>
-            <div className="mt-1 font-mono text-[10px]" style={{ color: 'var(--text-3)' }}>LEADS FOUND</div>
+            <div className="mt-1 font-mono text-[10px]" style={{ color: 'var(--text-3)' }}>{leadsLabel}</div>
           </div>
         </div>
       </div>

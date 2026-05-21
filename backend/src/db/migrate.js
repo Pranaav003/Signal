@@ -16,6 +16,9 @@ async function main() {
     await pool.query(
       `ALTER TABLE keyword_sets ADD COLUMN IF NOT EXISTS scan_progress JSONB`
     );
+    await pool.query(
+      `ALTER TABLE keyword_sets ADD COLUMN IF NOT EXISTS search_brief JSONB DEFAULT '{}'::jsonb`
+    );
 
     await pool.query(`
       CREATE TABLE IF NOT EXISTS tracked_replies (
@@ -69,6 +72,30 @@ async function main() {
     );
 
     await pool.query(`DROP TABLE IF EXISTS saved_searches`);
+
+    const migration002 = fs.readFileSync(
+      path.join(__dirname, 'migrations/002_scan_runs.sql'),
+      'utf8'
+    );
+    await pool.query(migration002);
+
+    const migration003 = fs.readFileSync(
+      path.join(__dirname, 'migrations/003_search_focus.sql'),
+      'utf8'
+    );
+    await pool.query(migration003);
+
+    const migration004 = fs.readFileSync(
+      path.join(__dirname, 'migrations/004_deleted_lifecycle.sql'),
+      'utf8'
+    );
+    await pool.query(migration004);
+
+    const migration005 = fs.readFileSync(
+      path.join(__dirname, 'migrations/005_lead_type_visibility.sql'),
+      'utf8'
+    );
+    await pool.query(migration005);
 
     console.log('✓ Migration complete');
     await pool.end();

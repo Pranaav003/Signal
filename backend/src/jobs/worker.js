@@ -1,17 +1,36 @@
-require('dotenv').config();
+require('../config/loadEnv');
+
+if (process.env.OPENAI_API_KEY) {
+  console.log('[worker] OPENAI_API_KEY loaded — AI planner/classifier enabled');
+} else {
+  console.warn(
+    '[worker] OPENAI_API_KEY missing — scans will use fallback qualification (set backend/.env)'
+  );
+}
 
 const Redis = require('ioredis');
 
-const { initWorker } = require('./scanJob');
+const {
+  initWorker,
+  SCAN_QUEUE_NAME,
+  MANUAL_SCAN_QUEUE_NAME,
+} = require('./scanJob');
 const { initTrackerWorker } = require('./trackerJob');
 const { validateRedditCredentials } = require('../services/redditService');
+const {
+  REDIS_URL,
+  redactRedisUrl,
+  getRedisDbIndex,
+} = require('./queueFactory');
+const { startWorkerHeartbeatLoop } = require('../services/workerHeartbeat');
 
 /** Repeatable enqueue runs from the HTTP service (`index.js` → `startScheduler`). */
 
 async function verifyRedis() {
-  const url = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
+  const url = REDIS_URL;
   const client = new Redis(url, {
-    maxRetriesPerRequest: 1,
+    maxRetriesPerRequest: null,
+    enableReadyCheck: false,
     connectTimeout: 5000,
     lazyConnect: true,
   });
@@ -50,11 +69,20 @@ async function main() {
     );
   }
 
+  startWorkerHeartbeatLoop({
+    consumer_queues: [MANUAL_SCAN_QUEUE_NAME, SCAN_QUEUE_NAME],
+    consumer_queue_name: `${MANUAL_SCAN_QUEUE_NAME}+${SCAN_QUEUE_NAME}`,
+    process_id: String(process.pid),
+  });
+
   initWorker();
   initTrackerWorker();
 
-  console.log('✓ Signal worker started');
-  console.log('✓ Reddit scan worker listening');
+  console.log('✓ Signal worker started (pid %s)', process.pid);
+  console.log(`✓ Redis: ${redactRedisUrl(REDIS_URL)} (db ${getRedisDbIndex()})`);
+  console.log(`✓ Manual scan queue: ${MANUAL_SCAN_QUEUE_NAME}`);
+  console.log(`✓ Scheduled scan queue: ${SCAN_QUEUE_NAME}`);
+  console.log('✓ Worker heartbeat: signal:worker:heartbeat (every 10s)');
   console.log('✓ Reply tracker worker listening');
 }
 

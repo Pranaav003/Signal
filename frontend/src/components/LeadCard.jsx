@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import TrackedReplyStats from './TrackedReplyStats'
 import { api } from '../lib/api'
+import { leadTypeBadgeStyle, leadTypeFromLead, leadTypeLabel } from '../lib/leadTypes'
 import { formatRelativeTime } from '../lib/time'
 
 function scoreClass(score) {
@@ -182,12 +183,41 @@ export default function LeadCard({
     }
   }
 
+  function buildWhyLinesFromQualification() {
+    const q =
+      lead?.qualification && typeof lead.qualification === 'object'
+        ? lead.qualification
+        : null
+    if (!q) return null
+    const lines = []
+    const label = leadTypeLabel(lead)
+    if (label) lines.push(`Lead type: ${label}`)
+    if (q.evidence) lines.push(`Evidence: ${q.evidence}`)
+    if (q.confidence != null) lines.push(`Classifier confidence: ${q.confidence}`)
+    if (q.recommended_visibility && q.recommended_visibility !== 'show') {
+      lines.push(`Inbox visibility: ${q.recommended_visibility}`)
+    }
+    return lines.length ? lines : null
+  }
+
   async function toggleWhyScore() {
     if (whyOpen) {
       setWhyOpen(false)
       return
     }
+    const qualLines = buildWhyLinesFromQualification()
     const fromRow = lead.score_reasons
+    if (qualLines?.length) {
+      const merged = [...qualLines]
+      if (Array.isArray(fromRow)) {
+        for (const line of fromRow) {
+          if (!merged.some((m) => m === line)) merged.push(line)
+        }
+      }
+      setWhyLines(merged)
+      setWhyOpen(true)
+      return
+    }
     if (Array.isArray(fromRow) && fromRow.length > 0) {
       setWhyLines(fromRow)
       setWhyOpen(true)
@@ -210,6 +240,8 @@ export default function LeadCard({
   }
 
   const scoreDisplay = Number.isFinite(scoreNum) ? String(scoreNum) : '–'
+  const leadType = leadTypeFromLead(lead)
+  const leadTypeStyle = leadTypeBadgeStyle(leadType)
   const rel = formatRelativeTime(lead.created_utc ?? lead.created_at)
   const timeLine = rel === '—' ? '—' : `${rel} ago`
   const hnLead = isHNLead(lead)
@@ -411,6 +443,12 @@ export default function LeadCard({
               </>
             )}
           </span>
+          <span
+            className="inline-block rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide"
+            style={{ ...leadTypeStyle, borderRadius: 4 }}
+          >
+            {leadTypeLabel(lead)}
+          </span>
           {lead.monitor_name ? (
             <span
               style={{
@@ -478,9 +516,26 @@ export default function LeadCard({
             className="mt-2 space-y-1.5 pl-0 font-mono text-[11px]"
             style={{ color: 'var(--text-2)', listStyle: 'none', marginBottom: 0, lineHeight: 1.45 }}
           >
-            {whyLines.map((line, i) => (
-              <li key={i}>{line}</li>
-            ))}
+            {whyLines.map((line, i) => {
+              const isReject = /^Rejected:/i.test(line)
+              const isQual = /Evidence:|Lead type:|Matched pattern|Required evidence|Classifier confidence/i.test(
+                line
+              )
+              return (
+                <li
+                  key={i}
+                  style={
+                    isReject
+                      ? { color: 'var(--red)' }
+                      : isQual
+                        ? { color: 'var(--accent)' }
+                        : undefined
+                  }
+                >
+                  {line}
+                </li>
+              )
+            })}
           </ul>
         ) : null}
       </div>

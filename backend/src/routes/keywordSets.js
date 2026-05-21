@@ -7,9 +7,65 @@ const {
   getManualScanJobState,
   rescheduleRepeatableScanForKeywordSet,
 } = require('../jobs/scanJob');
+const { getScanRunForStatus } = require('../services/scanRunService');
+const { readWorkerHeartbeat, isHeartbeatFresh } = require('../services/workerHeartbeat');
 const { generateExamplePost } = require('../services/draftService');
+const { normalizeSearchFocus } = require('../utils/searchFocus');
+const { deleteMonitorForUser } = require('../services/monitorLifecycle');
 
 const router = express.Router();
+
+router.post('/preview-plan', async (req, res) => {
+  const description = req.body?.product_description ?? req.body?.description;
+
+  if (!description || typeof description !== 'string' || !description.trim()) {
+    return res.status(400).json({ error: 'product_description is required' });
+  }
+
+  try {
+    const searchFocus = req.body?.search_focus;
+    const plan = await generateQueries(description.trim(), { search_focus: searchFocus });
+    const brief = plan.search_brief || {};
+    return res.json({
+      rewritten_monitor: plan.rewritten_prompt || brief.rewritten_monitor || description.trim(),
+      product_type: plan.product_type || brief.product_type || 'unknown',
+      sides: plan.sides || brief.sides || [],
+      primary_side: plan.primary_side || brief.primary_side || 'demand_side',
+      primary_side_reason: plan.primary_side_reason || brief.primary_side_reason || null,
+      search_focus: plan.search_focus || searchFocus || brief.search_focus || brief.primary_side,
+      rewritten_prompt: plan.rewritten_prompt || brief.rewritten_monitor || description.trim(),
+      lead_definition: brief.lead_definition || plan.lead_definition || null,
+      customer_personas: brief.customer_personas || plan.target_customer || [],
+      positive_lead_patterns: plan.positive_lead_patterns || brief.positive_lead_patterns || [],
+      negative_lead_patterns: plan.negative_lead_patterns || brief.negative_lead_patterns || [],
+      required_evidence: brief.required_evidence || plan.required_concepts || [],
+      disqualifying_evidence: brief.disqualifying_evidence || plan.disqualifiers || [],
+      acceptable_edge_cases: brief.acceptable_edge_cases || [],
+      product_summary: plan.product_summary || null,
+      target_customer: plan.target_customer || [],
+      pain_points: plan.pain_points || [],
+      queries: plan.queries || [],
+      subreddits: plan.subreddits || [],
+      negative_keywords: plan.negative_keywords || [],
+      reddit_fit: plan.reddit_fit || 'good',
+      warning: plan.warning || null,
+      suggestion: plan.suggestion || null,
+      planner_source: plan.planner_source || brief.planner_source || plan.source || 'mixed',
+      planner_model: plan.planner_model || brief.planner_model || null,
+      reasoning_summary: plan.reasoning_summary || null,
+      search_brief: brief,
+    });
+  } catch (err) {
+    console.error('[keywordSets] POST /preview-plan', err);
+    return res.status(500).json({
+      error: 'keyword_generation_failed',
+      message:
+        process.env.NODE_ENV === 'production'
+          ? 'Failed to generate search strategy.'
+          : err.message,
+    });
+  }
+});
 
 router.post('/preview-example', async (req, res) => {
   const description = req.body?.description;
@@ -35,8 +91,14 @@ router.post('/preview-example', async (req, res) => {
 });
 
 router.post('/', async (req, res) => {
-  const { user_id, product_description, scan_interval_hours, pitch_line } =
-    req.body ?? {};
+  const {
+    user_id,
+    product_description,
+    scan_interval_hours,
+    pitch_line,
+    search_focus: bodySearchFocus,
+    searchFocus: bodySearchFocusCamel,
+  } = req.body ?? {};
 
   if (!user_id || !product_description) {
     return res
@@ -62,7 +124,28 @@ router.post('/', async (req, res) => {
     if (count >= 3) {
       return res.status(403).json({
         error: 'monitor_limit_reached',
-        message: 'You have reached the maximum number of monitors.',
+        message:
+          'You have reached the maximum number of monitors. Delete one before creating another.',
+      });
+    }
+
+    const requestedSearchFocus = bodySearchFocus || bodySearchFocusCamel;
+
+    let plan;
+    try {
+      plan = await generateQueries(product_description, {
+        search_focus: requestedSearchFocus,
+      });
+    } catch (genErr) {
+      console.error('[keywordSets] POST / generateQueries failed', genErr);
+      const isPlan = genErr?.code === 'invalid_search_plan';
+      return res.status(isPlan ? 400 : 500).json({
+        error: isPlan ? 'invalid_search_plan' : 'keyword_generation_failed',
+        message:
+          process.env.NODE_ENV === 'production' && !isPlan
+            ? 'Failed to generate search strategy.'
+            : genErr.message,
+        stack: process.env.NODE_ENV === 'production' ? undefined : genErr.stack,
       });
     }
 
@@ -72,7 +155,34 @@ router.post('/', async (req, res) => {
       reddit_fit = 'good',
       warning,
       suggestion,
-    } = await generateQueries(product_description);
+    } = plan;
+
+    if (!Array.isArray(queries) || !queries.length || !Array.isArray(subreddits) || !subreddits.length) {
+      return res.status(500).json({
+        error: 'keyword_generation_failed',
+        message: 'Search plan was empty after generation.',
+      });
+    }
+
+    const searchFocus = normalizeSearchFocus(
+      requestedSearchFocus,
+      plan.search_focus || plan.primary_side || 'demand_side'
+    );
+
+    const searchBrief = {
+      ...(plan.search_brief || {}),
+      rewritten_prompt: plan.rewritten_prompt,
+      queries,
+      subreddits,
+      search_focus: searchFocus,
+      negative_keywords: plan.negative_keywords,
+      required_concepts: plan.required_concepts,
+      disqualifiers: plan.disqualifiers,
+      positive_lead_patterns: plan.positive_lead_patterns,
+      negative_lead_patterns: plan.negative_lead_patterns,
+      target_customer: plan.target_customer,
+      pain_points: plan.pain_points,
+    };
 
     const { rows } = await pool.query(
       `INSERT INTO keyword_sets (
@@ -85,9 +195,11 @@ router.post('/', async (req, res) => {
           scan_interval_hours,
           reddit_fit,
           fit_warning,
-          fit_suggestion
+          fit_suggestion,
+          search_brief,
+          search_focus
         )
-        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9)
+        VALUES (gen_random_uuid(), $1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
         RETURNING *`,
       [
         user_id,
@@ -99,6 +211,8 @@ router.post('/', async (req, res) => {
         reddit_fit,
         warning,
         suggestion,
+        JSON.stringify(searchBrief),
+        searchFocus,
       ]
     );
 
@@ -116,7 +230,14 @@ router.post('/', async (req, res) => {
     }
 
     console.error('[keywordSets] POST /', err);
-    return res.status(500).json({ error: 'Failed to create keyword set' });
+    return res.status(500).json({
+      error: 'failed_to_create_keyword_set',
+      message:
+        process.env.NODE_ENV === 'production'
+          ? 'Failed to create keyword set'
+          : err.message,
+      stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
+    });
   }
 });
 
@@ -165,135 +286,270 @@ router.delete('/duplicates', async (req, res) => {
   }
 });
 
-const SCANNING_PROGRESS_PHASES = new Set([
-  'active',
-  'starting',
-  'scanning',
-  'reddit_global',
-  'subreddit',
-  'dedupe',
-  'score',
-  'persist',
-  'finalize',
-]);
-
-function resolveScanStatus(keywordSet, _leadsFound, jobState) {
-  const progress = keywordSet.scan_progress;
-  const progressPhase = progress && progress.phase ? String(progress.phase) : null;
-
-  let status;
-
-  // Current scan in progress — must win over stale last_scanned_at from an older run.
-  if (progressPhase === 'queued') {
-    status = 'queued';
-  } else if (SCANNING_PROGRESS_PHASES.has(progressPhase)) {
-    status = 'scanning';
-  } else if (jobState === 'active') {
-    status = 'scanning';
-  } else if (jobState === 'waiting' || jobState === 'delayed' || jobState === 'paused') {
-    status = 'queued';
-  } else if (progressPhase === 'error') {
-    status = 'failed';
-  } else if (progressPhase === 'complete') {
-    status = 'complete';
-  } else if (jobState === 'failed') {
-    status = 'failed';
-  } else if (keywordSet.last_scanned_at) {
-    status = 'complete';
-  } else if (jobState === 'completed') {
-    status = 'unknown';
-  } else {
-    status = 'unknown';
+function parseJsonField(value, fallback = {}) {
+  if (!value) return fallback;
+  if (typeof value === 'object') return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return fallback;
   }
-
-  let worker_hint = null;
-
-  if (status === 'queued') {
-    const queuedAt = progress?.queued_at ? new Date(progress.queued_at).getTime() : null;
-    if (queuedAt && Date.now() - queuedAt > 60 * 1000) {
-      worker_hint =
-        'Scan is queued. Make sure the Bull worker is running: cd backend && npm run worker';
-    } else {
-      worker_hint = 'Scan is waiting in the queue for the worker.';
-    }
-  } else if (status === 'unknown' && !keywordSet.last_scanned_at) {
-    worker_hint =
-      'No completed scan yet. Check Redis (redis-cli ping) and run the worker (npm run worker).';
-  } else if (status === 'failed' && progress?.message) {
-    worker_hint = progress.message;
-  }
-
-  return { status, worker_hint };
 }
 
 router.get('/:id/scan-status', async (req, res) => {
   try {
     const { id } = req.params;
 
-    const ksResult = await pool.query('SELECT * FROM keyword_sets WHERE id = $1', [
-      id,
-    ]);
+    const ksResult = await pool.query('SELECT * FROM keyword_sets WHERE id = $1', [id]);
 
     if (!ksResult.rows.length) {
-      return res.status(404).json({ error: 'keyword_set not found' });
+      return res.status(404).json({ error: 'Keyword set not found' });
     }
 
     const keywordSet = ksResult.rows[0];
 
-    const leadsResult = await pool.query(
-      'SELECT COUNT(*) as count FROM leads WHERE keyword_set_id = $1',
-      [id]
+    if (keywordSet.active === false) {
+      return res.status(404).json({
+        error: 'keyword_set_not_found',
+        inactive: true,
+        message: 'This monitor no longer exists or is inactive.',
+      });
+    }
+
+    const scanProgress = parseJsonField(keywordSet.scan_progress, {});
+    const scanRun = await getScanRunForStatus(pool, keywordSet);
+    const runStatusEarly = String(scanRun?.status || '').toLowerCase();
+    const runDiagnostics = parseJsonField(scanRun?.diagnostics, {});
+    const progressDiagnostics = parseJsonField(scanProgress.diagnostics, {});
+    const { job, state: jobState, orphan_waiting, in_wait_queue, queue_name: manualQueueName } =
+      await getManualScanJobState(id);
+
+    const liveProgressFields = Object.fromEntries(
+      Object.entries(scanProgress).filter(
+        ([k]) =>
+          !['phase', 'message', 'completed_at', 'queued_at', 'started_at', 'job_id'].includes(k)
+      )
     );
-    const leadsFound = parseInt(leadsResult.rows[0].count, 10);
 
-    const { state: jobState } = await getManualScanJobState(id);
-    const { status, worker_hint } = resolveScanStatus(keywordSet, leadsFound, jobState);
+    const diagnostics =
+      runStatusEarly === 'complete' || runStatusEarly === 'failed'
+        ? { ...runDiagnostics, scan_run_id: scanRun?.id || runDiagnostics.scan_run_id }
+        : {
+            ...runDiagnostics,
+            ...progressDiagnostics,
+            ...liveProgressFields,
+          };
 
-    const progress = keywordSet.scan_progress;
-    const queries = keywordSet.queries || [];
-    const subreddits = keywordSet.subreddits || [];
-
-    console.log(
-      `[scan-status] id=${id} status=${status} job=${jobState || 'none'} leads=${leadsFound}`
+    let insertedThisRun = Number(
+      diagnostics.inserted_count ?? scanProgress.inserted_count ?? scanProgress.leads_saved ?? 0
     );
 
-    const diagnostics = progress
-      ? {
-          collected_raw: progress.collected_raw ?? null,
-          raw_global_count: progress.raw_global_count ?? null,
-          raw_subreddit_count: progress.raw_subreddit_count ?? null,
-          deduped_count: progress.deduped_count ?? null,
-          scored_count: progress.scored_count ?? null,
-          survivors_count: progress.survivors_count ?? null,
-          inserted_count: progress.inserted_count ?? progress.leads_saved ?? null,
-          duplicate_count: progress.duplicate_count ?? null,
-          reddit_error_count: progress.reddit_error_count ?? null,
-          reddit_auth_error: progress.reddit_auth_error ?? null,
-          last_reddit_error: progress.last_reddit_error ?? null,
-          threshold_used: progress.threshold_used ?? null,
-          filtered_out_count: progress.filtered_out_count ?? null,
-        }
-      : null;
+    if (scanRun?.id) {
+      const countResult = await pool.query(
+        `SELECT COUNT(*)::int AS c
+         FROM leads
+         WHERE scan_run_id = $1 AND COALESCE(is_active, true) = true`,
+        [scanRun.id]
+      );
+      const dbCount = countResult.rows[0]?.c;
+      if (Number.isFinite(dbCount)) insertedThisRun = dbCount;
+    }
+
+    const activeMonitorResult = await pool.query(
+      `SELECT COUNT(*)::int AS c
+       FROM leads
+       WHERE keyword_set_id = $1
+         AND user_id = $2
+         AND COALESCE(is_active, true) = true`,
+      [id, keywordSet.user_id]
+    );
+    const activeMonitorLeadCount = activeMonitorResult.rows[0]?.c ?? 0;
+
+    const totalMonitorResult = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM leads WHERE keyword_set_id = $1 AND user_id = $2`,
+      [id, keywordSet.user_id]
+    );
+    const totalMonitorLeadCount = totalMonitorResult.rows[0]?.c ?? 0;
+
+    const leadsFound = insertedThisRun;
+    const currentScanInsertedCount = insertedThisRun;
+
+    const heartbeat = await readWorkerHeartbeat();
+    const workerAlive = isHeartbeatFresh(heartbeat, 30);
+    const workerState = workerAlive ? 'available' : 'missing';
+
+    const queryCount = Array.isArray(keywordSet.queries) ? keywordSet.queries.length : 0;
+    const subredditCount = Array.isArray(keywordSet.subreddits)
+      ? keywordSet.subreddits.length
+      : 0;
+
+    const queuedAt = scanProgress.queued_at || scanProgress.started_at;
+    const queuedForSeconds = queuedAt
+      ? Math.max(0, Math.floor((Date.now() - new Date(queuedAt).getTime()) / 1000))
+      : 0;
+
+    const runStatus = String(scanRun?.status || '').toLowerCase();
+    let status = 'idle';
+    const progressPhase = String(scanProgress.phase || '').toLowerCase();
+    let displayJobState = jobState;
+
+    if (runStatus === 'complete') {
+      status = 'complete';
+      displayJobState = null;
+    } else if (progressPhase === 'complete' && keywordSet.last_scanned_at) {
+      status = 'complete';
+      displayJobState = null;
+    } else if (runStatus === 'failed') {
+      const runError = String(scanRun?.error_message || scanProgress.message || '');
+      const recoverableFailedScan =
+        insertedThisRun > 0 &&
+        (/Bull job is still active|diagnostics consistency/i.test(runError) ||
+          progressPhase === 'complete');
+      if (recoverableFailedScan) {
+        status = 'complete';
+        displayJobState = null;
+      } else {
+        status = 'failed';
+        displayJobState = job ? 'failed' : null;
+      }
+    } else if (progressPhase === 'error') {
+      status = 'failed';
+    } else if (orphan_waiting) {
+      status = 'stuck';
+    } else if (!job && progressPhase === 'queued' && !keywordSet.last_scanned_at && queuedForSeconds >= 90) {
+      status = 'stuck';
+    } else if (
+      ['collecting', 'scoring', 'qualifying', 'saving', 'persist', 'qualify', 'reddit_global', 'subreddit', 'active'].includes(
+        progressPhase
+      ) ||
+      runStatus === 'running'
+    ) {
+      status = 'scanning';
+      if (jobState === 'active') displayJobState = 'active';
+    } else if (jobState === 'active' && runStatus !== 'complete') {
+      status = 'scanning';
+    } else if (
+      ['waiting', 'delayed', 'paused'].includes(jobState || '') ||
+      progressPhase === 'queued'
+    ) {
+      const stuckNoWorker = !workerAlive && queuedForSeconds >= 30;
+      const stuckLongWait =
+        (jobState === 'waiting' || jobState === 'delayed') && queuedForSeconds >= 180;
+      status = stuckNoWorker || stuckLongWait ? 'stuck' : 'queued';
+    } else if (runStatus === 'queued' || progressPhase === 'queued') {
+      const stuckNoWorker = !workerAlive && queuedForSeconds >= 30;
+      const stuckLongWait =
+        (jobState === 'waiting' || jobState === 'delayed') && queuedForSeconds >= 180;
+      status = stuckNoWorker || stuckLongWait || orphan_waiting ? 'stuck' : 'queued';
+    } else if (progressPhase === 'complete' && runStatus === 'complete') {
+      status = 'complete';
+    } else if (keywordSet.last_scanned_at && runStatus !== 'running' && runStatus !== 'queued') {
+      status = 'complete';
+      displayJobState = null;
+    }
+
+    if (
+      progressPhase === 'queued' &&
+      runStatus !== 'complete' &&
+      (jobState === null || jobState === 'unknown') &&
+      queuedForSeconds >= 120 &&
+      !keywordSet.last_scanned_at
+    ) {
+      status = 'stuck';
+    }
+
+    let workerHint = null;
+    if (orphan_waiting) {
+      workerHint =
+        'Scan is queued but the job is not in the worker queue (orphan). Click Rescan on this monitor, or restart the backend worker.';
+    } else if (status === 'stuck' && !workerAlive) {
+      workerHint =
+        'Worker is not running. Start it with: cd backend && npm run worker (or npm run dev from the repo root).';
+    } else if (status === 'stuck') {
+      workerHint =
+        'Scan is queued but not progressing. Try Retry scan or check GET /api/debug/scan-queue.';
+    } else if (!job && !keywordSet.last_scanned_at && progressPhase !== 'complete') {
+      workerHint =
+        'No worker job found. Start the scan worker: cd backend && npm run worker (or ./scripts/dev-all.sh).';
+    } else if (status === 'queued') {
+      workerHint = workerAlive
+        ? 'Scan is queued — worker is running and will pick this up soon.'
+        : 'Worker is not running. Start it with: cd backend && npm run worker';
+    } else if (jobState === 'active') {
+      workerHint = 'Worker is running this scan.';
+    }
+
+    const plannerSource =
+      diagnostics.planner_source || scanProgress.planner_source || null;
+    const classifierSource =
+      diagnostics.classifier_source || scanProgress.classifier_source || null;
+
+    const scanProgressOut = {
+      ...scanProgress,
+      ...diagnostics,
+      inserted_count: insertedThisRun,
+      leads_saved: insertedThisRun,
+      leads_found: leadsFound,
+      planner_source: plannerSource,
+      classifier_source: classifierSource,
+      diagnostic_summary:
+        scanProgress.diagnostic_summary ||
+        diagnostics.diagnostic_summary ||
+        null,
+    };
+
+    const classifierWarning =
+      plannerSource === 'ai' && classifierSource === 'fallback'
+        ? `AI classifier failed; fallback qualification used. ${diagnostics.classifier_error || ''}`.trim()
+        : null;
 
     return res.json({
       id: keywordSet.id,
       status,
-      job_state: jobState,
-      worker_hint,
+      job_state: displayJobState,
+      job_in_wait_list: in_wait_queue,
+      job_orphan_waiting: orphan_waiting,
+      worker_state: workerState,
+      manual_scan_queue: manualQueueName,
+      in_manual_wait_queue: Boolean(in_wait_queue),
+      orphan_job: Boolean(orphan_waiting),
+      job_id: job?.id || scanProgress.job_id || null,
+      scan_run_id: scanRun?.id || keywordSet.current_scan_run_id || null,
+      started_at: scanProgress.started_at || scanRun?.started_at || null,
+      queued_for_seconds: queuedForSeconds,
       last_scanned_at: keywordSet.last_scanned_at,
       leads_found: leadsFound,
-      queries,
-      subreddits,
-      live_queries: queries,
-      live_subreddits: subreddits,
+      current_scan_inserted_count: currentScanInsertedCount,
+      active_monitor_lead_count: activeMonitorLeadCount,
+      total_monitor_lead_count: totalMonitorLeadCount,
+      classifier_warning: classifierWarning,
+      classifier_error: diagnostics.classifier_error || null,
+      diagnostics,
+      scan_progress: scanProgressOut,
+      queries: keywordSet.queries || [],
+      subreddits: keywordSet.subreddits || [],
+      query_count: queryCount,
+      subreddit_count: subredditCount,
+      live_queries: keywordSet.queries || [],
+      live_subreddits: keywordSet.subreddits || [],
       product_description: keywordSet.product_description,
       scan_interval_hours: keywordSet.scan_interval_hours,
-      scan_progress: progress || null,
-      diagnostics,
+      worker_hint: workerHint,
+      planner_source: plannerSource,
+      planner_model: diagnostics.planner_model || scanProgress.planner_model || null,
+      classifier_source: classifierSource,
+      classifier_model: diagnostics.classifier_model || null,
     });
   } catch (err) {
     console.error('[scan-status] ERROR:', err);
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({
+      error: 'scan_status_failed',
+      message:
+        process.env.NODE_ENV === 'production'
+          ? 'Failed to read scan status'
+          : err.message,
+      stack: process.env.NODE_ENV === 'production' ? undefined : err.stack,
+    });
   }
 });
 
@@ -309,10 +565,19 @@ router.post('/:id/rescan', async (req, res) => {
       return res.status(404).json({ error: 'Monitor not found' });
     }
 
+    const { rows: ksRows } = await pool.query(
+      `SELECT id, user_id FROM keyword_sets WHERE id = $1`,
+      [req.params.id]
+    );
+    if (ksRows[0]) {
+      const { deactivateStaleLeads } = require('../services/scanRunService');
+      await deactivateStaleLeads(pool, ksRows[0].id, ksRows[0].user_id);
+    }
+
     await pool.query(`UPDATE keyword_sets SET last_scanned_at = NULL WHERE id = $1`, [
       req.params.id,
     ]);
-    await addScanJob(req.params.id);
+    await addScanJob(req.params.id, ksRows[0]?.user_id);
 
     return res.json({ ok: true });
   } catch (err) {
@@ -324,7 +589,12 @@ router.post('/:id/rescan', async (req, res) => {
 router.get('/user/:userId', async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT * FROM keyword_sets WHERE user_id = $1 ORDER BY created_at DESC`,
+      `SELECT *
+       FROM keyword_sets
+       WHERE user_id = $1
+         AND COALESCE(active, true) = true
+         AND deleted_at IS NULL
+       ORDER BY created_at DESC`,
       [req.params.userId]
     );
 
@@ -336,21 +606,41 @@ router.get('/user/:userId', async (req, res) => {
 });
 
 router.delete('/:id', async (req, res) => {
-  try {
-    await pool.query(
-      `UPDATE keyword_sets SET active = false WHERE id = $1`,
-      [req.params.id]
-    );
+  const userId = req.query?.user_id || req.body?.user_id;
+  if (!userId) {
+    return res.status(400).json({
+      error: 'user_id_required',
+      message: 'Pass user_id as a query parameter when deleting a monitor.',
+    });
+  }
 
-    return res.json({ success: true });
+  try {
+    const result = await deleteMonitorForUser(req.params.id, userId);
+    if (!result.ok) {
+      return res.status(404).json({
+        error: 'keyword_set_not_found',
+        message: 'Monitor not found or already deleted.',
+      });
+    }
+    return res.json({
+      success: true,
+      deleted_monitor_id: result.deleted_monitor_id,
+      hidden_leads_count: result.hidden_leads_count,
+      cancelled_scan_runs_count: result.cancelled_scan_runs_count,
+      jobs_removed: result.jobs_removed,
+    });
   } catch (err) {
     console.error('[keywordSets] DELETE /:id', err);
-    return res.status(500).json({ error: 'Failed to deactivate keyword set' });
+    return res.status(500).json({
+      error: 'Failed to deactivate keyword set',
+      message:
+        process.env.NODE_ENV === 'production' ? 'Failed to delete monitor.' : err.message,
+    });
   }
 });
 
 router.patch('/:id', async (req, res) => {
-  const { product_description, scan_interval_hours, pitch_line } = req.body ?? {};
+  const { product_description, search_focus } = req.body ?? {};
 
   if (!product_description || typeof product_description !== 'string') {
     return res.status(400).json({ error: 'product_description is required' });
@@ -367,49 +657,41 @@ router.patch('/:id', async (req, res) => {
   }
 
   try {
-    const { rows: existingRows } = await pool.query(
-      `SELECT * FROM keyword_sets WHERE id = $1 AND active = true`,
+    const { rows: found } = await pool.query(
+      `SELECT id FROM keyword_sets WHERE id = $1 AND active = true`,
       [req.params.id]
     );
 
-    if (!existingRows.length) {
-      return res.status(404).json({ error: 'Keyword set not found' });
+    if (!found.length) {
+      return res.status(404).json({
+        error: 'keyword_set_not_found',
+        message: 'This monitor no longer exists or is inactive.',
+      });
     }
 
-    const existing = existingRows[0];
-    const prevDesc = String(existing.product_description || '').trim();
-    const descChanged = desc !== prevDesc;
-
-    let scanHours = Number(existing.scan_interval_hours) || 6;
-    if (scan_interval_hours !== undefined && scan_interval_hours !== null) {
-      const hours = parseInt(String(scan_interval_hours), 10);
-      scanHours = [6, 12, 24].includes(hours) ? hours : 6;
+    let plan;
+    try {
+      plan = await generateQueries(desc, { search_focus });
+    } catch (genErr) {
+      console.error('[keywordSets] PATCH generateQueries failed', genErr);
+      return res.status(500).json({
+        error: 'keyword_generation_failed',
+        message:
+          process.env.NODE_ENV === 'production'
+            ? 'Failed to generate search strategy.'
+            : genErr.message,
+      });
     }
 
-    let pitch = existing.pitch_line ?? null;
-    if (pitch_line !== undefined) {
-      if (pitch_line === null || pitch_line === '') {
-        pitch = null;
-      } else if (typeof pitch_line === 'string') {
-        const t = pitch_line.trim();
-        pitch = t ? t : null;
-      }
-    }
-
-    let queries = existing.queries;
-    let subreddits = existing.subreddits;
-    let reddit_fit = existing.reddit_fit ?? 'good';
-    let warning = existing.fit_warning ?? null;
-    let suggestion = existing.fit_suggestion ?? null;
-
-    if (descChanged) {
-      const generated = await generateQueries(desc);
-      queries = generated.queries;
-      subreddits = generated.subreddits;
-      reddit_fit = generated.reddit_fit ?? 'good';
-      warning = generated.warning ?? null;
-      suggestion = generated.suggestion ?? null;
-    }
+    const { queries, subreddits, reddit_fit = 'good', warning, suggestion } = plan;
+    const searchFocus = normalizeSearchFocus(
+      search_focus,
+      plan.search_focus || plan.primary_side || 'demand_side'
+    );
+    const searchBrief = {
+      ...(plan.search_brief || {}),
+      search_focus: searchFocus,
+    };
 
     const { rows } = await pool.query(
       `UPDATE keyword_sets
@@ -419,8 +701,8 @@ router.patch('/:id', async (req, res) => {
            reddit_fit = $5,
            fit_warning = $6,
            fit_suggestion = $7,
-           scan_interval_hours = $8,
-           pitch_line = $9
+           search_brief = $8::jsonb,
+           search_focus = $9
        WHERE id = $1 AND active = true
        RETURNING *`,
       [
@@ -431,24 +713,19 @@ router.patch('/:id', async (req, res) => {
         reddit_fit,
         warning,
         suggestion,
-        scanHours,
-        pitch,
+        JSON.stringify(searchBrief),
+        searchFocus,
       ]
     );
 
     if (!rows.length) {
-      return res.status(404).json({ error: 'Keyword set not found' });
+      return res.status(404).json({
+        error: 'keyword_set_not_found',
+        message: 'This monitor no longer exists or is inactive.',
+      });
     }
 
-    try {
-      await rescheduleRepeatableScanForKeywordSet(req.params.id);
-    } catch (schedErr) {
-      console.error('[keywordSets] reschedule repeat after PATCH', schedErr);
-    }
-
-    if (descChanged) {
-      await addScanJob(rows[0].id);
-    }
+    await addScanJob(rows[0].id, rows[0].user_id);
 
     return res.json({
       ...rows[0],

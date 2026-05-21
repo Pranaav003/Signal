@@ -15,7 +15,7 @@ function normalizeLeadsResponse(data) {
 
 /**
  * @param {string | null} userId
- * @param {{ isScanning?: boolean, sort?: string, seen?: boolean | string, limit?: number }} [options]
+ * @param {{ isScanning?: boolean, sort?: string, seen?: boolean | string, limit?: number, include?: string }} [options]
  */
 export function useLeads(userId, options = {}) {
   const {
@@ -23,6 +23,7 @@ export function useLeads(userId, options = {}) {
     sort = 'score',
     seen,
     limit = DEFAULT_FETCH_LIMIT,
+    include: leadInclude = '',
   } = options
 
   const [leads, setLeads] = useState([])
@@ -30,18 +31,22 @@ export function useLeads(userId, options = {}) {
   const [newLeadIds, setNewLeadIds] = useState([])
   const [newLeadCount, setNewLeadCount] = useState(0)
   const [pollingMessage, setPollingMessage] = useState('')
+  const [fetchError, setFetchError] = useState('')
+  const serverErrorLoggedRef = useRef(false)
 
   const mountedRef = useRef(false)
   const inFlightRef = useRef(false)
   const pollTimeoutRef = useRef(null)
   const backoffUntilRef = useRef(0)
   const seenRef = useRef(seen)
+  const includeRef = useRef(leadInclude)
   const prevLeadsRef = useRef([])
   const prevCountRef = useRef(0)
   const toastTimerRef = useRef(null)
   const animTimerRef = useRef(null)
 
   seenRef.current = seen
+  includeRef.current = leadInclude
 
   useEffect(() => {
     mountedRef.current = true
@@ -92,6 +97,10 @@ export function useLeads(userId, options = {}) {
       if (sv !== undefined && sv !== null && sv !== '') {
         params.seen = sv === true || sv === 'true' ? 'true' : 'false'
       }
+      const inc = includeRef.current
+      if (inc) {
+        params.include = inc
+      }
 
       const { data } = await api.get(`/api/leads/user/${userId}`, { params })
       const arr = normalizeLeadsResponse(data)
@@ -134,7 +143,7 @@ export function useLeads(userId, options = {}) {
       inFlightRef.current = false
       if (mountedRef.current) setLoading(false)
     }
-  }, [userId, sort, limit])
+  }, [userId, sort, limit, leadInclude])
 
   useEffect(() => {
     if (!userId) {
@@ -186,7 +195,7 @@ export function useLeads(userId, options = {}) {
         pollTimeoutRef.current = null
       }
     }
-  }, [userId, isScanning, fetchLeads])
+  }, [userId, isScanning, leadInclude, fetchLeads])
 
   const markSeen = useCallback(async (id) => {
     const { data } = await api.patch(`/api/leads/${id}/seen`)
@@ -245,7 +254,10 @@ export function useLeads(userId, options = {}) {
     return { draft }
   }, [])
 
-  const refreshLeads = useCallback(() => fetchLeads(), [fetchLeads])
+  const refreshLeads = useCallback(async () => {
+    prevCountRef.current = 0
+    return fetchLeads()
+  }, [fetchLeads])
 
   return {
     leads,
@@ -253,6 +265,7 @@ export function useLeads(userId, options = {}) {
     newLeadIds,
     newLeadCount,
     pollingMessage,
+    fetchError,
     markSeen,
     markUnread,
     dismissLead,

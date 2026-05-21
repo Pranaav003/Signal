@@ -1,39 +1,129 @@
+/** Build a user-facing line when a scan finished with few or zero leads. */
+export function formatScanDiagnosticSummary(data) {
+  const d = data?.diagnostics || data?.scan_progress || {}
+  if (d.diagnostic_summary) return String(d.diagnostic_summary)
+
+  const raw = Number(d.raw_candidates ?? d.collected_raw ?? 0)
+  const rawSeen = Number(d.raw_seen_total ?? 0)
+  const rawTruncated = Boolean(d.raw_truncated)
+  const redditRaw = Number(
+    d.reddit_raw_count ?? (Number(d.raw_global_count ?? 0) + Number(d.raw_subreddit_count ?? 0))
+  )
+  const hn = Number(d.hn_raw_count ?? d.raw_hn_count ?? 0)
+  const ranked = Number(d.initially_scored_count ?? d.scored_count ?? 0)
+  const qualified = Number(
+    d.ai_qualified_count ?? d.rules_qualified_count ?? d.semantically_qualified ?? 0
+  )
+  const rejectedSemantic = Number(d.rejected_semantic_count ?? d.ai_rejected_count ?? 0)
+  const rejectedNegative = Number(d.negative_filtered_count ?? d.skipped_negative_count ?? 0)
+  const inserted = Number(d.inserted_count ?? d.leads_saved ?? data?.leads_found ?? 0)
+  const duplicates = Number(d.duplicate_count ?? 0)
+  const threshold = d.threshold_used ?? '?'
+  const mode = d.reddit_mode || 'unknown'
+
+  const planner =
+    d.planner_source === 'ai'
+      ? `Search plan: AI (${d.planner_model || 'model'})`
+      : d.planner_source === 'fallback'
+        ? 'Search plan: fallback'
+        : null
+  const classifier =
+    d.classifier_source === 'ai'
+      ? `Qualification: AI (${d.classifier_model || 'model'})`
+      : d.classifier_source === 'fallback'
+        ? 'Qualification: fallback'
+        : null
+
+  const consistency =
+    inserted > 0 && raw === 0 ? ' [diagnostics inconsistency: saved leads but 0 raw]' : ''
+
+  const rawLabel =
+    rawTruncated && rawSeen > raw
+      ? `${rawSeen} seen, capped to ${raw} for scoring`
+      : `${raw} raw candidates`
+  const focus = d.search_focus ? ` Focus: ${d.search_focus}.` : ''
+  const parts = [
+    `Found ${rawLabel}: ${redditRaw} Reddit, ${hn} HN.${focus}`,
+    `${ranked} ranked, ${qualified} passed qualification, ${rejectedSemantic} rejected (semantic), ${rejectedNegative} filtered (negative).`,
+    `${inserted} saved this scan, ${duplicates} duplicates. Mode: ${mode}, threshold ${threshold}.`,
+  ]
+  if (planner) parts.push(planner)
+  if (classifier) parts.push(classifier)
+
+  return parts.join(' ') + consistency
+}
+
 /** Build a user-facing line when a scan finished with 0 leads. */
 export function formatZeroLeadsDiagnostic(data) {
-  const d = data?.diagnostics || data?.scan_progress || {};
-  const inserted = Number(d.inserted_count ?? d.leads_saved ?? data?.leads_found ?? 0);
-  if (inserted > 0) return null;
+  const d = data?.diagnostics || data?.scan_progress || {}
+  const inserted = Number(d.inserted_count ?? d.leads_saved ?? data?.leads_found ?? 0)
+  if (inserted > 0) return null
+
+  const summary = formatScanDiagnosticSummary(data)
+  if (summary && !summary.startsWith('Found 0 raw')) {
+    return summary
+  }
 
   if (d.reddit_auth_error) {
-    return 'Reddit blocked or rate-limited requests. Set REDDIT_USER_AGENT in backend/.env (public JSON API, no OAuth).';
+    return 'Reddit blocked or auth failed. Set REDDIT_USER_AGENT or OAuth credentials in backend/.env.'
   }
 
-  const raw = Number(d.collected_raw ?? 0);
-  const deduped = Number(d.deduped_count ?? 0);
-  const survivors = Number(d.survivors_count ?? 0);
-  const threshold = d.threshold_used ?? '?';
-  const duplicates = Number(d.duplicate_count ?? 0);
+  const raw = Number(d.raw_candidates ?? d.collected_raw ?? 0)
+  const deduped = Number(d.deduped_count ?? 0)
+  const survivors = Number(d.final_candidates_count ?? d.survivors_count ?? 0)
+  const threshold = d.threshold_used ?? '?'
+  const duplicates = Number(d.duplicate_count ?? 0)
+  const hn = Number(d.hn_raw_count ?? d.raw_hn_count ?? 0)
 
   if (raw === 0) {
-    if (Number(d.reddit_error_count || 0) > 0) {
-      return `Reddit returned 0 raw results (${d.reddit_error_count} errors). ${d.last_reddit_error || 'Set REDDIT_USER_AGENT and restart the worker.'}`;
+    if (Number(d.reddit_error_count || 0) > 0 || Number(d.hn_error_count || 0) > 0) {
+      return `0 raw results (${d.reddit_error_count || 0} Reddit errors, ${d.hn_error_count || 0} HN errors). ${d.last_reddit_error || d.last_hn_error || ''}`
     }
-    return 'Reddit returned 0 raw results. Restart backend worker and run: cd backend && npm run test:reddit';
+    return '0 raw results. Run: cd backend && npm run compare:scan -- --description "..."'
   }
   if (deduped === 0) {
-    return 'Reddit returned results but none had valid post IDs after dedupe.';
+    return 'Results returned but none had valid post IDs after dedupe.'
   }
   if (survivors === 0 && deduped > 0) {
-    return `Reddit returned ${raw} raw / ${deduped} deduped, but 0 passed scoring threshold ${threshold}.`;
+    return `Found ${raw} raw (${hn} HN). ${deduped} deduped, 0 passed scoring threshold ${threshold}.`
   }
   if (survivors > 0 && duplicates > 0 && inserted === 0) {
-    return `${survivors} passed scoring but all were duplicates already in the database.`;
+    return `${survivors} passed scoring but all ${duplicates} were duplicates already in the database.`
   }
   if (d.last_reddit_error) {
-    return `Reddit errors occurred: ${d.last_reddit_error}`;
+    return `Reddit errors: ${d.last_reddit_error}`
   }
   if (data?.scan_progress?.message) {
-    return String(data.scan_progress.message);
+    return String(data.scan_progress.message)
   }
-  return 'Scan finished with 0 new leads. Check worker logs for details.';
+  return summary || 'Scan finished with 0 new leads. Check worker logs.'
+}
+
+/** Show diagnostic summary when lead count is low (< 5). */
+export function formatLowLeadsDiagnostic(data, leadsFound) {
+  const n = Number(leadsFound ?? 0)
+  if (n >= 5) return null
+  return formatScanDiagnosticSummary(data)
+}
+
+/** One-line AI vs fallback visibility for scan complete UI. */
+export function formatAiSourceSummary(data) {
+  const d = data?.diagnostics || data?.scan_progress || data || {}
+  const lines = []
+  if (d.planner_source === 'ai') {
+    lines.push(`Search plan: AI-generated using ${d.planner_model || 'OpenAI'}`)
+  } else if (d.planner_source === 'fallback') {
+    lines.push('Search plan: fallback — OPENAI_API_KEY missing or planner failed')
+  }
+  if (d.classifier_source === 'ai') {
+    lines.push(`Lead qualification: AI using ${d.classifier_model || 'OpenAI'}`)
+  } else if (d.classifier_source === 'fallback') {
+    const err = d.classifier_error ? ` (${d.classifier_error})` : ''
+    if (d.planner_source === 'ai') {
+      lines.push(`AI classifier failed; fallback qualification used${err}`)
+    } else {
+      lines.push(`Lead qualification: fallback classifier${err}`)
+    }
+  }
+  return lines.length ? lines.join('\n') : null
 }

@@ -46,6 +46,7 @@ function IconTrash({ className }) {
 export default function KeywordSetItem({
   keywordSet,
   isActive,
+  isScanning = false,
   onClick,
   unseenCount,
   onDelete,
@@ -252,18 +253,31 @@ export default function KeywordSetItem({
               {truncated || 'Untitled'}
             </p>
 
-            {(unseenCount ?? 0) > 0 && (
-              <span
-                className="mt-1 inline-flex items-center rounded px-2 py-0.5 font-mono text-[11px]"
-                style={{
-                  background: 'var(--accent)',
-                  color: '#07070b',
-                  fontVariantNumeric: 'tabular-nums',
-                }}
-              >
-                {String(unseenCount)}
-              </span>
-            )}
+            <div className="mt-1 flex flex-wrap items-center gap-1.5">
+              {isScanning ? (
+                <span
+                  className="inline-flex items-center rounded px-2 py-0.5 font-mono text-[10px] uppercase tracking-wide"
+                  style={{
+                    background: 'rgba(124,106,247,0.2)',
+                    color: 'var(--accent)',
+                  }}
+                >
+                  Scanning
+                </span>
+              ) : null}
+              {(unseenCount ?? 0) > 0 ? (
+                <span
+                  className="inline-flex items-center rounded px-2 py-0.5 font-mono text-[11px]"
+                  style={{
+                    background: 'var(--accent)',
+                    color: '#07070b',
+                    fontVariantNumeric: 'tabular-nums',
+                  }}
+                >
+                  {String(unseenCount)}
+                </span>
+              ) : null}
+            </div>
           </div>
         </div>
       </button>

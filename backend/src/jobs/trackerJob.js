@@ -1,9 +1,8 @@
-const Bull = require('bull');
-
 const pool = require('../db/connection');
 const { getCommentStats } = require('../services/redditTracker');
+const { createBullQueue, TRACKER_QUEUE_NAME } = require('./queueFactory');
 
-const trackerQueue = new Bull('reply-tracker', process.env.REDIS_URL);
+const trackerQueue = createBullQueue(TRACKER_QUEUE_NAME);
 
 let trackerWorkerStarted = false;
 

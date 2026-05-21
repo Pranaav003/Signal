@@ -15,10 +15,14 @@ CREATE TABLE IF NOT EXISTS keyword_sets (
   scan_interval_hours INTEGER DEFAULT 6,
   last_scanned_at TIMESTAMPTZ,
   scan_progress JSONB,
+  search_brief JSONB DEFAULT '{}'::jsonb,
+  search_focus TEXT DEFAULT 'demand_side',
+  current_scan_run_id UUID,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   reddit_fit TEXT DEFAULT 'good',
   fit_warning TEXT,
-  fit_suggestion TEXT
+  fit_suggestion TEXT,
+  deleted_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS leads (
@@ -38,8 +42,26 @@ CREATE TABLE IF NOT EXISTS leads (
   seen BOOLEAN DEFAULT false,
   ai_draft TEXT,
   score_reasons TEXT[] NOT NULL DEFAULT '{}',
+  scan_run_id UUID,
+  qualification JSONB DEFAULT '{}'::jsonb,
+  lead_type TEXT,
+  recommended_visibility TEXT DEFAULT 'show',
+  is_active BOOLEAN DEFAULT true,
+  deleted_at TIMESTAMPTZ,
   created_at TIMESTAMPTZ DEFAULT NOW(),
   UNIQUE (user_id, keyword_set_id, post_id)
+);
+
+CREATE TABLE IF NOT EXISTS scan_runs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  keyword_set_id UUID NOT NULL REFERENCES keyword_sets (id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  status TEXT NOT NULL DEFAULT 'queued',
+  started_at TIMESTAMPTZ DEFAULT NOW(),
+  completed_at TIMESTAMPTZ,
+  diagnostics JSONB DEFAULT '{}'::jsonb,
+  search_brief JSONB DEFAULT '{}'::jsonb,
+  error_message TEXT
 );
 
 CREATE TABLE IF NOT EXISTS thread_suppressions (

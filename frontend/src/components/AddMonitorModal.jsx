@@ -30,6 +30,10 @@ export default function AddMonitorModal({
   const [pitchLine, setPitchLine] = useState('')
   const [previewLoading, setPreviewLoading] = useState(false)
   const [preview, setPreview] = useState(null)
+  const [searchPlan, setSearchPlan] = useState(null)
+  const [searchPlanLoading, setSearchPlanLoading] = useState(false)
+  const [searchPlanError, setSearchPlanError] = useState('')
+  const [searchFocus, setSearchFocus] = useState('demand_side')
   const [scanIntervalHours, setScanIntervalHours] = useState(6)
   const [submitLoading, setSubmitLoading] = useState(false)
   const [submitError, setSubmitError] = useState('')
@@ -44,6 +48,10 @@ export default function AddMonitorModal({
       setDescription('')
       setPitchLine('')
       setPreview(null)
+      setSearchPlan(null)
+      setSearchFocus('demand_side')
+      setSearchPlanLoading(false)
+      setSearchPlanError('')
       setPreviewLoading(false)
       setScanIntervalHours(6)
       setSubmitLoading(false)
@@ -70,6 +78,10 @@ export default function AddMonitorModal({
       setPitchLine(pitch ? String(editKeywordSet.pitch_line) : '')
       setScanIntervalHours(scanH)
       setPreview(null)
+      setSearchPlan(null)
+      setSearchFocus('demand_side')
+      setSearchPlanLoading(false)
+      setSearchPlanError('')
       setPreviewLoading(false)
       setSubmitError('')
       setPreviewError('')
@@ -107,6 +119,40 @@ export default function AddMonitorModal({
     },
     [onClose]
   )
+
+  async function handleGenerateSearchPreview() {
+    if (!trimmed) return
+
+    setSearchPlanLoading(true)
+    setSearchPlanError('')
+    setSearchPlan(null)
+
+    try {
+      const { data } = await api.post('/api/keyword-sets/preview-plan', {
+        product_description: trimmed,
+        search_focus: searchFocus,
+      })
+      setSearchPlan(data)
+      const focus = data?.search_focus || data?.primary_side || 'demand_side'
+      if (['demand_side', 'supply_side', 'both'].includes(focus)) {
+        setSearchFocus(focus)
+      }
+    } catch (err) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('[AddMonitorModal] preview-plan failed', err?.response?.data || err)
+      }
+      const code = err?.response?.data?.error
+      const serverMsg = err?.response?.data?.message
+      setSearchPlanError(
+        code === 'keyword_generation_failed'
+          ? serverMsg ||
+              'Signal could not generate a search strategy. Add who the customer is and what problem they have.'
+          : serverMsg || err?.message || 'Failed to generate search preview.'
+      )
+    } finally {
+      setSearchPlanLoading(false)
+    }
+  }
 
   async function handleGeneratePreview() {
     if (!trimmed) return
@@ -189,9 +235,18 @@ export default function AddMonitorModal({
 
       await Promise.resolve(onSuccess?.(updated, { mode: 'edit' }))
     } catch (err) {
+      if (err?.response?.status === 404) {
+        const msg =
+          err?.response?.data?.message ||
+          'This monitor no longer exists or was deleted. Refreshing monitors…'
+        setSubmitError(msg)
+        await onSyncList?.()
+        onClose()
+        return
+      }
       const msg =
-        err?.response?.data?.error ||
         err?.response?.data?.message ||
+        err?.response?.data?.error ||
         err?.message ||
         'Something went wrong.'
       setSubmitError(typeof msg === 'string' ? msg : 'Something went wrong.')
@@ -214,6 +269,7 @@ export default function AddMonitorModal({
         user_id: userId,
         product_description: trimmed,
         scan_interval_hours: scanIntervalHours,
+        search_focus: searchFocus,
       }
 
       const pitch = pitchLine.trim()
@@ -244,6 +300,10 @@ export default function AddMonitorModal({
         await Promise.resolve(onSuccess?.(created, { mode: 'create' }))
       }
     } catch (err) {
+      if (process.env.NODE_ENV !== 'production') {
+        console.error('[AddMonitorModal] create failed', err?.response?.data || err)
+      }
+
       if (
         err?.response?.status === 403 &&
         err?.response?.data?.error === 'monitor_limit_reached'
@@ -253,11 +313,26 @@ export default function AddMonitorModal({
         return
       }
 
-      const msg =
-        err?.response?.data?.error ||
-        err?.response?.data?.message ||
-        err?.message ||
-        'Something went wrong.'
+      const code = err?.response?.data?.error
+      const serverMsg = err?.response?.data?.message
+
+      let msg = serverMsg || err?.message || 'Something went wrong.'
+      if (code === 'monitor_limit_reached') {
+        msg =
+          serverMsg ||
+          'You have reached the maximum number of monitors. Delete one before creating another.'
+      } else if (code === 'keyword_generation_failed') {
+        msg =
+          serverMsg ||
+          'Signal could not generate a search strategy for this product. Try adding who the customer is and what problem they have.'
+      } else if (code === 'failed_to_create_keyword_set') {
+        msg = serverMsg || 'Failed to create monitor. Please try again.'
+      } else if (code === 'invalid_user_id' || err?.response?.status === 400) {
+        msg = serverMsg || 'Session issue. Refresh and try again.'
+      } else if (err?.response?.status === 500 && !serverMsg) {
+        msg = 'Failed to create keyword set. Check backend logs.'
+      }
+
       setSubmitError(typeof msg === 'string' ? msg : 'Something went wrong.')
     } finally {
       setSubmitLoading(false)
@@ -265,11 +340,11 @@ export default function AddMonitorModal({
   }
 
   async function handlePrimaryAction() {
-    if (isEditMode) {
+    if (editKeywordSet?.id) {
       await handleSaveEdit()
-    } else {
-      await handleStartMonitoring()
+      return
     }
+    await handleStartMonitoring()
   }
 
   if (!isOpen) return null
@@ -397,6 +472,121 @@ export default function AddMonitorModal({
             }}
           />
         </div>
+
+        {showAdvanced && !isEditMode && (
+          <div className="mt-6 rounded-lg border p-4" style={{ borderColor: 'var(--border)', background: 'var(--bg)' }}>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-mono" style={{ fontSize: '10px', letterSpacing: '0.08em', color: 'var(--text-muted)' }}>
+                SEARCH STRATEGY PREVIEW
+              </span>
+              <button
+                type="button"
+                className="signal-btn-focus border-none bg-transparent p-0 font-mono text-[11px]"
+                style={{ color: 'var(--accent)', cursor: searchPlanLoading ? 'wait' : 'pointer' }}
+                disabled={searchPlanLoading}
+                onClick={() => void handleGenerateSearchPreview()}
+              >
+                {searchPlanLoading ? 'Generating…' : searchPlan ? 'Regenerate Preview' : 'Generate Search Preview'}
+              </button>
+            </div>
+            {searchPlanError ? <p className="mt-2 text-[12px]" style={{ color: 'var(--red)' }}>{searchPlanError}</p> : null}
+            {searchPlan ? (
+              <div className="mt-3 space-y-2 font-mono text-[11px]" style={{ color: 'var(--text-2)' }}>
+                <p className="m-0" style={{ color: 'var(--text-muted)' }}>
+                  Search plan: {searchPlan.planner_source === 'ai' ? 'AI-generated' : 'fallback'}
+                  {searchPlan.planner_model ? ` (${searchPlan.planner_model})` : ''}
+                </p>
+                <p className="m-0" style={{ color: 'var(--accent)' }}>Signal understands this as:</p>
+                <p className="m-0 leading-relaxed" style={{ color: 'var(--text)' }}>
+                  {searchPlan.rewritten_monitor || searchPlan.rewritten_prompt}
+                </p>
+                {searchPlan.lead_definition ? (
+                  <p className="m-0"><span style={{ color: 'var(--text-muted)' }}>Lead definition: </span>{searchPlan.lead_definition}</p>
+                ) : null}
+                {(searchPlan.required_evidence || []).length ? (
+                  <>
+                    <p className="m-0 mb-0" style={{ color: 'var(--text-muted)' }}>A good lead must show:</p>
+                    <ul className="m-0 list-none pl-0">
+                      {searchPlan.required_evidence.slice(0, 6).map((e) => (
+                        <li key={e}>→ {e}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {(searchPlan.disqualifying_evidence || []).length ? (
+                  <>
+                    <p className="m-0 mb-0" style={{ color: 'var(--text-muted)' }}>Signal will reject:</p>
+                    <ul className="m-0 list-none pl-0">
+                      {searchPlan.disqualifying_evidence.slice(0, 6).map((e) => (
+                        <li key={e}>→ {e}</li>
+                      ))}
+                    </ul>
+                  </>
+                ) : null}
+                {(searchPlan.sides || []).length >= 2 ? (
+                  <div className="mt-2 space-y-2 rounded border p-3" style={{ borderColor: 'var(--border)' }}>
+                    <p className="m-0" style={{ color: 'var(--text-muted)' }}>
+                      This looks like a marketplace ({searchPlan.product_type || 'multi-sided'})
+                    </p>
+                    {(searchPlan.sides || []).map((side) => (
+                      <div key={side.name} className="space-y-1">
+                        <p className="m-0 font-bold" style={{ color: 'var(--text)' }}>
+                          {side.name === 'demand_side' ? 'Demand side' : side.name === 'supply_side' ? 'Supply side' : side.name}
+                        </p>
+                        {side.description ? (
+                          <p className="m-0" style={{ color: 'var(--text-2)' }}>{side.description}</p>
+                        ) : null}
+                        {(side.likely_buyers_or_users || []).length ? (
+                          <p className="m-0" style={{ color: 'var(--text-2)' }}>
+                            Who: {(side.likely_buyers_or_users || []).slice(0, 4).join(', ')}
+                          </p>
+                        ) : null}
+                        {(side.search_queries || side.queries || []).length ? (
+                          <p className="m-0" style={{ color: 'var(--text-2)' }}>
+                            Sample queries: {(side.search_queries || side.queries || []).slice(0, 3).join(' · ')}
+                          </p>
+                        ) : null}
+                      </div>
+                    ))}
+                    {searchPlan.primary_side_reason ? (
+                      <p className="m-0 text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                        {searchPlan.primary_side_reason}
+                      </p>
+                    ) : null}
+                  </div>
+                ) : null}
+                <p className="m-0 mb-1" style={{ color: 'var(--text-muted)' }}>Signal will scan first:</p>
+                <div className="flex flex-wrap gap-2">
+                  {[
+                    { id: 'demand_side', label: 'Find customers / demand' },
+                    { id: 'supply_side', label: 'Find suppliers / providers' },
+                    { id: 'both', label: 'Find both' },
+                  ].map((opt) => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      className="signal-btn-focus rounded border px-2 py-1 font-mono text-[10px]"
+                      style={{
+                        borderColor: searchFocus === opt.id ? 'var(--accent)' : 'var(--border)',
+                        color: searchFocus === opt.id ? 'var(--accent)' : 'var(--text-2)',
+                        background: searchFocus === opt.id ? 'rgba(124,106,247,0.12)' : 'transparent',
+                        cursor: 'pointer',
+                      }}
+                      onClick={() => setSearchFocus(opt.id)}
+                    >
+                      {opt.label}
+                    </button>
+                  ))}
+                </div>
+                <p className="m-0 mb-0" style={{ color: 'var(--text-muted)' }}>Queries for selected focus (sample):</p>
+                <ul className="m-0 list-none pl-0">{(searchPlan.queries || []).slice(0, 5).map((q) => <li key={q}>→ {q}</li>)}</ul>
+                <p className="m-0"><span style={{ color: 'var(--text-muted)' }}>Subreddits: </span>{(searchPlan.subreddits || []).slice(0, 8).map((s) => `r/${s}`).join(', ')}</p>
+              </div>
+            ) : (
+              <p className="mt-2 m-0 text-[11px] italic" style={{ color: 'var(--text-muted)' }}>Preview how Signal will search before starting.</p>
+            )}
+          </div>
+        )}
 
         {showAdvanced && (
           <div className="add-monitor-preview-reveal mt-6">

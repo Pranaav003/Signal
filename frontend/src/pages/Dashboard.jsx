@@ -52,24 +52,30 @@ export default function Dashboard() {
     [keywordSets]
   )
 
+  const [scanUiPhase, setScanUiPhase] = useState('scanning')
+
   const leadTabs = useMemo(() => {
     const base = [
       { id: 'all', label: 'All' },
       { id: 'unread', label: 'Unread' },
     ]
     if (scanningKeywordSet) {
-      base.push({ id: 'scanning', label: 'Scanning' })
+      base.push({
+        id: 'scanning',
+        label: scanUiPhase === 'complete' ? 'Scan complete' : 'Scanning',
+      })
     }
     return base
-  }, [scanningKeywordSet])
+  }, [scanningKeywordSet, scanUiPhase])
 
+  // Switch away from the Scanning tab when viewing another monitor, but keep the scan
+  // running in the background (do not clear scanningKeywordSet — that unmounts ScanProgress).
   useEffect(() => {
     if (!scanningKeywordSet || !selectedKeywordSetId) return
-    if (scanningKeywordSet.id !== selectedKeywordSetId) {
-      setScanningKeywordSet(null)
-      setTab((t) => (t === 'scanning' ? 'all' : t))
+    if (scanningKeywordSet.id !== selectedKeywordSetId && tab === 'scanning') {
+      setTab('all')
     }
-  }, [selectedKeywordSetId, scanningKeywordSet])
+  }, [selectedKeywordSetId, scanningKeywordSet, tab])
 
   useEffect(() => {
     if (tab === 'scanning' && !scanningKeywordSet) {
@@ -216,7 +222,11 @@ export default function Dashboard() {
               onClick={(id) => {
                 setSelectedKeywordSetId(id)
                 setMainView('leads')
+                if (scanningKeywordSet?.id === id) {
+                  setTab('scanning')
+                }
               }}
+              isScanning={scanningKeywordSet?.id === ks.id}
               onEditMonitor={(id) => {
                 const row = activeKeywordSets.find((k) => k.id === id)
                 if (row) {
@@ -224,7 +234,18 @@ export default function Dashboard() {
                   setShowMonitorModal(true)
                 }
               }}
-              onDelete={deleteKeywordSet}
+              onDelete={async (id) => {
+                await deleteKeywordSet(id)
+                if (scanningKeywordSet?.id === id) {
+                  setScanningKeywordSet(null)
+                  setScanUiPhase('scanning')
+                  setTab('all')
+                }
+                if (selectedKeywordSetId === id) {
+                  setSelectedKeywordSetId(null)
+                }
+                await refreshLeads()
+              }}
             />
           ))}
 
@@ -307,16 +328,68 @@ export default function Dashboard() {
                 <p style={{ color: 'var(--muted)' }}>Bringing your workstation online...</p>
               ) : (
                 <>
+                  {scanningKeywordSet &&
+                  selectedKeywordSetId &&
+                  scanningKeywordSet.id !== selectedKeywordSetId &&
+                  tab !== 'scanning' ? (
+                    <div
+                      className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-lg border px-4 py-3"
+                      style={{
+                        borderColor: 'var(--border)',
+                        background: 'rgba(124,106,247,0.08)',
+                      }}
+                    >
+                      <p className="m-0 font-mono text-[12px]" style={{ color: 'var(--text-2)' }}>
+                        Another monitor is still scanning. You can browse leads here; progress
+                        continues in the background.
+                      </p>
+                      <button
+                        type="button"
+                        className="signal-btn-focus shrink-0 rounded-md border px-3 py-1.5 font-mono text-[11px]"
+                        style={{
+                          borderColor: 'var(--accent)',
+                          color: 'var(--accent)',
+                          background: 'transparent',
+                        }}
+                        onClick={() => {
+                          setSelectedKeywordSetId(scanningKeywordSet.id)
+                          setTab('scanning')
+                        }}
+                      >
+                        View scan progress
+                      </button>
+                    </div>
+                  ) : null}
                   {scanningKeywordSet ? (
                     <div className={tab === 'scanning' ? '' : 'hidden'} aria-hidden={tab !== 'scanning'}>
                       <ScanProgress
                         keywordSet={scanningKeywordSet}
-                        onScanComplete={() => {
-                          void refreshLeads()
+                        onScanComplete={refreshLeads}
+                        onScanReady={async ({ status, leadsFound }) => {
+                          if (status !== 'complete' && status !== 'failed') return
+                          setScanUiPhase('complete')
+                          const kid = scanningKeywordSet?.id
+                          if (kid) setSelectedKeywordSetId(kid)
+
+                          let rows = await refreshLeads()
+                          if (status === 'complete' && leadsFound > 0 && kid) {
+                            let visible = (rows || []).filter(
+                              (l) => l.keyword_set_id === kid
+                            )
+                            if (!visible.length) {
+                              await new Promise((r) => window.setTimeout(r, 600))
+                              rows = await refreshLeads()
+                              visible = (rows || []).filter((l) => l.keyword_set_id === kid)
+                            }
+                            if (visible.length > 0 || leadsFound > 0) {
+                              setTab('all')
+                            }
+                          }
                         }}
                         onComplete={() => {
                           void refreshLeads().finally(() => {
                             setScanningKeywordSet(null)
+                            setScanUiPhase('scanning')
                             setTab('all')
                           })
                         }}
@@ -368,6 +441,7 @@ export default function Dashboard() {
           if (result?.id) setSelectedKeywordSetId(result.id)
           if (meta?.mode === 'create' && result?.id) {
             setScanningKeywordSet(result)
+            setScanUiPhase('scanning')
             setTab('scanning')
           }
           closeMonitorModal()
