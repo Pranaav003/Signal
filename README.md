@@ -10,7 +10,7 @@ Reddit lead intelligence for small businesses.
 ./scripts/local-up.sh
 ```
 
-This starts Redis + Postgres (if installed via Homebrew), runs migrations, then launches **API + Vite** in one terminal (`Ctrl+C` stops both). Bull workers run inside the API process unless you set `SKIP_SCAN_WORKER` / `SKIP_TRACKER_WORKER` and use `node src/jobs/worker.js` separately.
+This starts Redis + Postgres (if installed via Homebrew), runs migrations, then launches **API + worker + Vite** in one terminal (`Ctrl+C` stops all three). The stable setup uses a **separate worker process** (`npm run dev:worker` via `scripts/dev-all.sh`), not in-process-only scanning.
 
 From the repository root (after `git clone`, the folder is usually `Signal` or `signal`):
 
@@ -112,3 +112,124 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 | JWT_SECRET | Random string; auto-generated on Render for the web service |
 
 For the **static frontend** build, **`VITE_API_URL`** is set from the backend’s **`RENDER_EXTERNAL_URL`** (via Blueprint `fromService` / `envVarKey`) so the browser calls the correct `https://…onrender.com` API.
+
+---
+
+## Current Stable Architecture
+
+Signal currently uses:
+
+- Express backend
+- React frontend
+- Postgres
+- Redis/Bull queues
+- Separate worker process (`backend/src/jobs/worker.js`)
+- AI planner/classifier
+- Public Reddit JSON search
+
+Job pipeline (do not remove from the stable baseline):
+
+- `backend/src/jobs/scanJob.js`
+- `backend/src/jobs/scheduler.js`
+- `backend/src/jobs/worker.js`
+- `backend/src/jobs/trackerJob.js`
+- `backend/src/jobs/queueFactory.js`
+- `backend/src/services/workerHeartbeat.js`
+
+Local dev requires **all** of:
+
+- backend API
+- backend worker
+- frontend
+- Postgres
+- Redis
+
+Redis is **not** optional for the stable version. The API schedules work; the worker processes Bull queues.
+
+---
+
+## Working-baseline verification
+
+Run from a clean clone (with `backend/.env` configured and Redis + Postgres running):
+
+```bash
+cd backend
+npm install
+npm run migrate
+npm run test:create-keyword-set
+npm run test:delete-monitor
+npm run test:keyword-plan -- --description "Therapup - service where dog/cat owners can rent their animals out to centers that people can come visit and spend time with the animals for a price"
+
+cd ../frontend
+npm install
+npm run build
+```
+
+Then from the repository root:
+
+```bash
+npm run dev
+```
+
+**Expected:**
+
+- Backend starts on port 3001
+- Worker starts and writes a Redis heartbeat
+- Redis connects
+- Frontend starts on port 5173
+- Monitor creation works
+- Deleting monitors hides associated leads
+- Scan status works
+- No `search_focus is not defined` errors
+- No React hook order errors
+- No 429 spam
+- No impossible scan diagnostics
+
+`test:keyword-plan` uses two layers:
+
+- **Production minimum (PASS/FAIL):** ≥5 non-placeholder queries, ≥1 `required_evidence`, valid `search_focus`, rubric present, no crash.
+- **Quality warnings (non-blocking):** e.g. fewer than 8 queries, fewer than 2 evidence items, fallback planner, missing marketplace sides for marketplace-like descriptions. Warnings do not fail the baseline.
+
+---
+
+## Free/Low-Cost Deployment Notes
+
+- The **current stable app** uses Redis/Bull and a **separate worker** (`signal-worker` in `render.yaml`).
+- **Removing Redis/Bull** or inlining the worker into the API is a **future architecture project**, not a quick deploy change. A previous in-process-only experiment broke scans and scheduling.
+- **For now**, deploy the stable version with: **backend + frontend + Postgres + Redis/Key Value + worker**.
+- If you want to reduce cost later, do it on a **separate branch** and keep this baseline restorable.
+
+Experimental branch name (do not use on `main` without a tag):
+
+```bash
+git checkout -b experiment-no-redis-scheduler
+```
+
+---
+
+## Baseline branch and tag (before any migration)
+
+Before any future architecture migration (e.g. removing Bull/Redis or merging the worker into the API), create a restore point:
+
+```bash
+git checkout -b stable-bull-worker-baseline
+git tag stable-bull-worker-working
+```
+
+Do not continue on `main` without a restore point you can return to.
+
+---
+
+## Safety checklist (before merging Cursor changes)
+
+- [ ] `cd frontend && npm run build` passes
+- [ ] Backend tests pass: `test:create-keyword-set`, `test:delete-monitor`, `test:keyword-plan`
+- [ ] Worker starts (`npm run dev` or `npm run dev:worker`)
+- [ ] Redis connects (`redis-cli ping` or worker heartbeat)
+- [ ] Monitor create works in the UI
+- [ ] Scan starts and completes
+- [ ] Delete monitor hides leads
+- [ ] No stale deleted leads visible
+- [ ] No `search_focus` ReferenceError
+- [ ] No React hook-order errors
+- [ ] No 500 from `/api/leads/user`
