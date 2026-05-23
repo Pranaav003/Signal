@@ -81,20 +81,16 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 
 ## Render deploy (checklist)
 
-1. **Push** this repository to **GitHub** on the **`main`** branch.
-2. Go to **render.com → New → Blueprint**.
-3. Point Render at the **repo root** (it will pick up **`render.yaml`**).
-4. **Blueprint file:** Redis-compatible storage is a **`type: keyvalue`** service (`signal-redis`), not a legacy root-level `redis:` block. `fromService` references include the required **`type`** (`keyvalue` or `web`).
-5. **Costs:** Render may reject **`plan: free`** for **`type: web`** (including static sites). This blueprint uses **`plan: starter`** for **signal-frontend** and **signal-worker**. **signal-backend** still uses **free** where your workspace allows it; if validation fails, bump it to **`starter`** the same way.
-6. In the Render dashboard, **manually add** these secrets (they are `sync: false` in the blueprint):
-   - `REDDIT_CLIENT_ID`
-   - `REDDIT_CLIENT_SECRET`
-   - `OPENAI_API_KEY`
-7. Click **Deploy**.
-8. **Logs to verify**
-   - **signal-backend:** `✓ Database connected` and `✓ Scheduler started: …`
-   - **signal-worker:** `✓ Signal worker started`
-9. Open the **signal-frontend** URL, create your first **keyword set**, then wait for the first scan (or trigger via queue as configured).
+**Option A (free demo):** Use the Blueprint in **`render.yaml`** — backend + **signal-worker-web** + static frontend. Add **Neon** `DATABASE_URL` and **Upstash** `REDIS_URL` manually. See **Option A deployment checklist** below.
+
+1. **Push** this repository to **GitHub**.
+2. Go to **render.com → New → Blueprint** and select the repo root.
+3. After deploy, set **`DATABASE_URL`**, **`REDIS_URL`**, and **`OPENAI_API_KEY`** on **signal-backend** and **signal-worker-web**.
+4. Configure **UptimeRobot** to ping both `/health` endpoints.
+5. **Logs to verify**
+   - **signal-backend:** `✓ Database connected`, `✓ Scheduler started`, `GET /health` returns `ok: true`
+   - **signal-worker-web:** `[worker-web] Bull worker started`, `/health` shows `workerStarted: true`
+6. Open **signal-frontend**, create a keyword set, confirm scan completes.
 
 ---
 
@@ -103,7 +99,8 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 | Variable | Description |
 |----------|-------------|
 | DATABASE_URL | PostgreSQL connection string |
-| REDIS_URL | Redis connection string |
+| REDIS_URL | Redis connection string (`rediss://` for Upstash TLS) |
+| WORKER_WEB_PORT | Optional local port for `npm run start:worker-web` (default 3002; use when `.env` sets `PORT=3001` for API) |
 | REDDIT_CLIENT_ID | From reddit.com/prefs/apps |
 | REDDIT_CLIENT_SECRET | From reddit.com/prefs/apps |
 | REDDIT_USER_AGENT | Format: `Signal/1.0 by YourUsername` (Render blueprint sets a default; override if you prefer) |
@@ -192,14 +189,68 @@ npm run dev
 
 ---
 
+## Option A: Render free deployment with worker-web
+
+This preserves the **working Bull/Redis/worker architecture**. The worker is deployed as a **Render free web service** (`signal-worker-web`) because free Render services require an HTTP endpoint. It still processes **real** Bull jobs from Redis — nothing is mocked or hardcoded.
+
+| Component | Service |
+|-----------|---------|
+| Frontend | Render static site (`signal-frontend`) |
+| Backend API | Render free web (`signal-backend`) — `GET /health` |
+| Worker | Render free web (`signal-worker-web`) — `npm run start:worker-web`, `GET /health` |
+| Postgres | **Neon** pooled `DATABASE_URL` (use pooler host, not direct Neon host) |
+| Redis/Bull | **Upstash** TCP `REDIS_URL` (`rediss://…`) — Bull uses this, **not** Upstash REST |
+| Keepalive | **UptimeRobot** pings backend and worker-web `/health` |
+
+**Committed config:** `render.yaml` and `backend/.env.render.example` include **rotated placeholder** Neon/Upstash values showing the exact format. **Replace with fresh Neon/Upstash credentials before a real deployment.** `OPENAI_API_KEY` stays `sync: false` in the blueprint — add it in the Render dashboard.
+
+`UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are optional reference env vars only; Bull/ioredis use `REDIS_URL`.
+
+**Caveats (demo/MVP):**
+
+- Free Render web services **sleep** after inactivity; scans may queue until UptimeRobot wakes the worker.
+- Upstash free tier has command limits.
+- OpenAI is not free without credits.
+- For production reliability, use a paid real worker service later.
+
+**Smoke tests (with Render env values loaded):**
+
+```bash
+cd backend
+npm run test:db      # SELECT NOW() against DATABASE_URL
+npm run test:redis   # PING against REDIS_URL (rediss:// TLS)
+```
+
+**Local dev unchanged:** API + `npm run worker` or `npm run dev`. Optional worker-web test:
+
+```bash
+cd backend
+# Optional: cp .env.render.example values into shell or a local env file for smoke tests
+WORKER_WEB_PORT=3002 npm run start:worker-web
+# http://localhost:3002/health — expect workerStarted: true
+```
+
+### Option A deployment checklist
+
+1. Replace placeholder values in `render.yaml` with fresh **Neon pooled** and **Upstash** URLs (or use committed placeholders only for format review).
+2. Deploy Render Blueprint from repo root.
+3. Set **`OPENAI_API_KEY`** on `signal-backend` and `signal-worker-web` in Render.
+4. Confirm **`VITE_API_URL`** on frontend points at backend `RENDER_EXTERNAL_URL`.
+5. **UptimeRobot** (every 5–10 min):
+   - `https://<signal-backend>/health`
+   - `https://<signal-worker-web>/health`
+6. Create a test monitor; verify scan completes and leads appear.
+7. Delete monitor; confirm leads disappear.
+
+---
+
 ## Free/Low-Cost Deployment Notes
 
-- The **current stable app** uses Redis/Bull and a **separate worker** (`signal-worker` in `render.yaml`).
-- **Removing Redis/Bull** or inlining the worker into the API is a **future architecture project**, not a quick deploy change. A previous in-process-only experiment broke scans and scheduling.
-- **For now**, deploy the stable version with: **backend + frontend + Postgres + Redis/Key Value + worker**.
-- If you want to reduce cost later, do it on a **separate branch** and keep this baseline restorable.
+- **Option A (recommended for $0 demo):** Neon + Upstash + Render free web (backend + worker-web + static frontend). See above.
+- **Paid Render baseline:** Render Postgres + Key Value + paid `type: worker` — see tag `stable-bull-worker-working`.
+- **Removing Redis/Bull** or inlining the worker into the API is a **future architecture project**, not a quick deploy change.
 
-Experimental branch name (do not use on `main` without a tag):
+Experimental branch name (do not use on the stable baseline without a tag):
 
 ```bash
 git checkout -b experiment-no-redis-scheduler

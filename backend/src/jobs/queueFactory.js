@@ -10,12 +10,21 @@ const MANUAL_SCAN_QUEUE_NAME = 'reddit-scan-manual';
 const TRACKER_QUEUE_NAME = 'reply-tracker';
 const REDIS_URL = process.env.REDIS_URL || 'redis://127.0.0.1:6379';
 
-/** Bull requires maxRetriesPerRequest: null on ioredis clients. */
-function createRedisClient() {
-  return new Redis(REDIS_URL, {
+/** Shared ioredis options — Bull, worker verify, and Upstash TLS (rediss://). */
+function getIoredisConnectionOptions(url = REDIS_URL) {
+  const opts = {
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
-  });
+  };
+  if (String(url || '').startsWith('rediss://')) {
+    opts.tls = { rejectUnauthorized: false };
+  }
+  return opts;
+}
+
+/** Bull requires maxRetriesPerRequest: null on ioredis clients. */
+function createRedisClient() {
+  return new Redis(REDIS_URL, getIoredisConnectionOptions());
 }
 
 function createBullQueue(name) {
@@ -49,6 +58,7 @@ module.exports = {
   MANUAL_SCAN_QUEUE_NAME,
   TRACKER_QUEUE_NAME,
   REDIS_URL,
+  getIoredisConnectionOptions,
   createRedisClient,
   createBullQueue,
   redactRedisUrl,

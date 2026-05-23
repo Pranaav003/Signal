@@ -6,10 +6,13 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "start:worker-web": "node worker-web.js",
     "dev": "nodemon --config nodemon.api.json index.js",
     "worker": "node src/jobs/worker.js",
     "dev:worker": "nodemon --config nodemon.worker.json src/jobs/worker.js",
     "migrate": "node src/db/migrate.js",
+    "test:db": "node src/scripts/testDbConnection.js",
+    "test:redis": "node src/scripts/testRedisConnection.js",
     "clear-queue": "node src/scripts/clearQueue.js",
     "test:reddit": "node src/scripts/testReddit.js",
     "compare:scan": "node src/scripts/compareScanSources.js",

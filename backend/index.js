@@ -81,9 +81,13 @@ app.use(selectRateLimiter);
 
 app.get('/health', (req, res) => {
   res.json({
-    status: 'ok',
-    service: 'signal',
-    timestamp: new Date(),
+    ok: true,
+    service: 'signal-backend',
+    timestamp: new Date().toISOString(),
+    uptimeSeconds: Math.round(process.uptime()),
+    databaseConfigured: Boolean(process.env.DATABASE_URL),
+    redisConfigured: Boolean(process.env.REDIS_URL),
+    openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
   });
 });
 

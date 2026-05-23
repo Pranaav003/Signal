@@ -1,23 +1,13 @@
-# Render Blueprint — https://render.com/docs/blueprint-spec
-# Key Value (Redis-compatible) must be a `services` entry with `type: keyvalue`, not a root `redis:` block.
+# Render Blueprint — Option A: free web services + Neon Postgres + Upstash Redis
+# https://render.com/docs/blueprint-spec
 #
-# Stable architecture (do not remove from this baseline without a tagged migration branch):
-#   signal-redis (Key Value) — REDIS_URL for Bull queues
-#   signal-backend — Express API + scheduler
-#   signal-worker — separate process: node src/jobs/worker.js
-#   signal-frontend — static Vite build
-#   signal-db — Postgres
-# Removing Redis/Bull/worker is a future experiment branch, not a quick deploy tweak.
+# Bull/Redis/worker architecture preserved. Worker runs as signal-worker-web (type: web).
+# Neon/Upstash values below are rotated placeholder credentials showing exact format.
+# Replace with fresh Neon/Upstash values before a real deployment.
+# OPENAI_API_KEY remains sync:false — set in Render dashboard.
+# Ping backend /health and worker-web /health with UptimeRobot (free tier sleeps when idle).
 
 services:
-  - type: keyvalue
-    name: signal-redis
-    plan: free
-    maxmemoryPolicy: noeviction
-    ipAllowList:
-      - source: 0.0.0.0/0
-        description: public (narrow for production if needed)
-
   - type: web
     name: signal-backend
     runtime: node
@@ -28,71 +18,95 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: SKIP_EMBEDDED_WORKERS
+        value: "true"
       - key: DATABASE_URL
-        fromDatabase:
-          name: signal-db
-          property: connectionString
+        value: postgresql://neondb_owner:npg_uZUv5znhX3yp@ep-winter-night-apz1odea-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require
       - key: REDIS_URL
-        fromService:
-          name: signal-redis
-          type: keyvalue
-          property: connectionString
-      - key: REDDIT_CLIENT_ID
-        sync: false
-      - key: REDDIT_CLIENT_SECRET
-        sync: false
+        value: rediss://default:gQAAAAAAAeJAAAIgcDI2YjY4ZDJjZjczMjU0ODk1YmQ0ZjgwOWI5YTdiYTlmMg@pet-crawdad-123456.upstash.io:6379
+      - key: UPSTASH_REDIS_REST_URL
+        value: https://pet-crawdad-123456.upstash.io
+      - key: UPSTASH_REDIS_REST_TOKEN
+        value: gQAAAAAAAeJAAAIgcDI2YjY4ZDJjZjczMjU0ODk1YmQ0ZjgwOWI5YTdiYTlmMg
       - key: REDDIT_USER_AGENT
         value: Signal/1.0
+      - key: USE_MOCK_REDDIT
+        value: "false"
       - key: OPENAI_API_KEY
         sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_CLASSIFIER_MODEL
+        value: gpt-4o-mini
+      - key: REQUIRE_AI_CLASSIFIER
+        value: "true"
+      - key: SCAN_INCREMENTAL_PERSIST
+        value: "false"
+      - key: SCAN_MAX_LEADS_PER_RUN
+        value: "40"
+      - key: SCAN_MAX_RAW_TOTAL
+        value: "500"
+      - key: SCAN_MAX_RAW_PER_PAIR
+        value: "50"
+      - key: SCAN_MAX_PAIRS
+        value: "30"
+      - key: MAX_QUALIFICATION_CANDIDATES
+        value: "80"
       - key: JWT_SECRET
         generateValue: true
 
-  # Workers cannot use the `free` instance type on Render (use starter+).
-  - type: worker
-    name: signal-worker
+  - type: web
+    name: signal-worker-web
     runtime: node
-    plan: starter
+    plan: free
     rootDir: backend
     buildCommand: npm install
-    startCommand: node src/jobs/worker.js
+    startCommand: npm run start:worker-web
     envVars:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        fromDatabase:
-          name: signal-db
-          property: connectionString
+        value: postgresql://neondb_owner:npg_uZUv5znhX3yp@ep-winter-night-apz1odea-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require
       - key: REDIS_URL
-        fromService:
-          name: signal-redis
-          type: keyvalue
-          property: connectionString
-      - key: REDDIT_CLIENT_ID
-        sync: false
-      - key: REDDIT_CLIENT_SECRET
-        sync: false
+        value: rediss://default:gQAAAAAAAeJAAAIgcDI2YjY4ZDJjZjczMjU0ODk1YmQ0ZjgwOWI5YTdiYTlmMg@pet-crawdad-123456.upstash.io:6379
+      - key: UPSTASH_REDIS_REST_URL
+        value: https://pet-crawdad-123456.upstash.io
+      - key: UPSTASH_REDIS_REST_TOKEN
+        value: gQAAAAAAAeJAAAIgcDI2YjY4ZDJjZjczMjU0ODk1YmQ0ZjgwOWI5YTdiYTlmMg
       - key: REDDIT_USER_AGENT
         value: Signal/1.0
+      - key: USE_MOCK_REDDIT
+        value: "false"
       - key: OPENAI_API_KEY
         sync: false
+      - key: OPENAI_MODEL
+        value: gpt-4o-mini
+      - key: OPENAI_CLASSIFIER_MODEL
+        value: gpt-4o-mini
+      - key: REQUIRE_AI_CLASSIFIER
+        value: "true"
+      - key: SCAN_INCREMENTAL_PERSIST
+        value: "false"
+      - key: SCAN_MAX_LEADS_PER_RUN
+        value: "40"
+      - key: SCAN_MAX_RAW_TOTAL
+        value: "500"
+      - key: SCAN_MAX_RAW_PER_PAIR
+        value: "50"
+      - key: SCAN_MAX_PAIRS
+        value: "30"
+      - key: MAX_QUALIFICATION_CANDIDATES
+        value: "80"
 
-  # Static sites are `type: web` + `runtime: static`; many workspaces no longer offer `plan: free` for web.
   - type: web
     name: signal-frontend
     runtime: static
-    plan: starter
     rootDir: frontend
     buildCommand: npm install && npm run build
     staticPublishPath: dist
     envVars:
-      # Web services expose public URL via RENDER_EXTERNAL_URL (not a fromService `property`).
       - key: VITE_API_URL
         fromService:
           name: signal-backend
           type: web
           envVarKey: RENDER_EXTERNAL_URL
-
-databases:
-  - name: signal-db
-    plan: free

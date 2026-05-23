@@ -21,6 +21,7 @@ const {
   REDIS_URL,
   redactRedisUrl,
   getRedisDbIndex,
+  getIoredisConnectionOptions,
 } = require('./queueFactory');
 const { startWorkerHeartbeatLoop } = require('../services/workerHeartbeat');
 
@@ -29,8 +30,7 @@ const { startWorkerHeartbeatLoop } = require('../services/workerHeartbeat');
 async function verifyRedis() {
   const url = REDIS_URL;
   const client = new Redis(url, {
-    maxRetriesPerRequest: null,
-    enableReadyCheck: false,
+    ...getIoredisConnectionOptions(url),
     connectTimeout: 5000,
     lazyConnect: true,
   });
@@ -54,7 +54,7 @@ async function verifyRedis() {
   }
 }
 
-async function main() {
+async function startWorker() {
   await verifyRedis();
 
   const redditCheck = await validateRedditCredentials();
@@ -86,7 +86,11 @@ async function main() {
   console.log('✓ Reply tracker worker listening');
 }
 
-main().catch((err) => {
-  console.error('Worker startup failed:', err && err.message ? err.message : err);
-  process.exit(1);
-});
+module.exports = { startWorker };
+
+if (require.main === module) {
+  startWorker().catch((err) => {
+    console.error('Worker startup failed:', err && err.message ? err.message : err);
+    process.exit(1);
+  });
+}
