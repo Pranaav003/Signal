@@ -739,6 +739,16 @@ export default function AddMonitorModal({
           </div>
         )}
 
+        {!isEditMode ? (
+          <p
+            className="mt-6 text-center text-[12px] leading-relaxed"
+            style={{ color: 'var(--text-muted)' }}
+          >
+            Scans usually take about 3–5 minutes. You can keep using the app while Signal works
+            in the background.
+          </p>
+        ) : null}
+
         <div className="mt-8 flex gap-3">
           <button
             type="button"

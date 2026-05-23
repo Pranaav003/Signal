@@ -115,6 +115,34 @@ const TERMINAL_SCAN_STATUSES = new Set([
   'cancelled',
 ])
 
+function getScanTimingHelper({ status, scanSeconds, terminalResult }) {
+  if (terminalResult?.status === 'failed' || terminalResult?.status === 'stuck') {
+    return null
+  }
+
+  if (terminalResult?.status === 'complete') {
+    return null
+  }
+
+  if (status === 'queued' || status === 'stuck') {
+    return 'Queued scans will start when the worker is awake and available.'
+  }
+
+  if (scanSeconds > 300 && (status === 'scanning' || !terminalResult)) {
+    return 'Still working — some Reddit scans take longer depending on rate limits and result volume.'
+  }
+
+  if (status === 'scanning' && !terminalResult) {
+    return 'Signal is collecting posts, scoring candidates, and saving qualified leads.'
+  }
+
+  if (!terminalResult) {
+    return 'Most scans finish in about 3–5 minutes. Larger scans may take longer.'
+  }
+
+  return null
+}
+
 function fillLine(text, ctx) {
   return String(text)
     .replace('__Q0__', `Generated: "${safeAt(ctx.queries, 0, 'lead generation help')}"`)
@@ -170,6 +198,7 @@ export default function ScanProgress({
   const [terminalResult, setTerminalResult] = useState(null)
   const [manualCheckDetail, setManualCheckDetail] = useState(null)
   const [retrying, setRetrying] = useState(false)
+  const [scanStatus, setScanStatus] = useState('scanning')
 
   const mountedRef = useRef(true)
   const phaseRef = useRef(0)
@@ -529,6 +558,7 @@ export default function ScanProgress({
 
       const initialStatus = String(data?.status || 'scanning')
       lastStatusRef.current = initialStatus
+      setScanStatus(initialStatus)
       if (data?.worker_hint) {
         workerHintRef.current = String(data.worker_hint)
         setWorkerHint(workerHintRef.current)
@@ -587,6 +617,7 @@ export default function ScanProgress({
 
         const status = String(data?.status || 'scanning')
         lastStatusRef.current = status
+        setScanStatus(status)
         lastJobStateRef.current = data?.job_state || null
 
         if (Number(data?.query_count) > 0) {
@@ -862,6 +893,11 @@ export default function ScanProgress({
         : 'STUCK'
     : 'SCANNING'
   const headerDone = Boolean(terminalResult)
+  const timingHelper = getScanTimingHelper({
+    status: scanStatus,
+    scanSeconds,
+    terminalResult,
+  })
 
   if (!keywordSetId) {
     return null
@@ -943,6 +979,20 @@ export default function ScanProgress({
             }}
           />
         </div>
+
+        {timingHelper ? (
+          <p
+            className="mt-4 rounded-lg border px-4 py-3 text-[12px] leading-relaxed"
+            style={{
+              borderColor: 'var(--border)',
+              background: 'rgba(124,106,247,0.08)',
+              color: 'var(--text-2)',
+              fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
+            }}
+          >
+            {timingHelper}
+          </p>
+        ) : null}
 
         <div
           ref={terminalRef}

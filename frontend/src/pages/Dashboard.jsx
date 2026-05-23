@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 
 import AddMonitorModal from '../components/AddMonitorModal'
+import IntroModal, { INTRO_STORAGE_KEY } from '../components/IntroModal'
 import LimitModal from '../components/LimitModal'
 import KeywordSetItem from '../components/KeywordSetItem'
 import LeadFeed from '../components/LeadFeed'
@@ -25,6 +26,8 @@ export default function Dashboard() {
   const [scanningKeywordSet, setScanningKeywordSet] = useState(null)
   const [showMonitorModal, setShowMonitorModal] = useState(false)
   const [showLimitModal, setShowLimitModal] = useState(false)
+  const [showIntro, setShowIntro] = useState(false)
+  const [showIntroHelp, setShowIntroHelp] = useState(false)
   const [monitorToEdit, setMonitorToEdit] = useState(null)
   const [mainView, setMainView] = useState('leads')
   const [selectedKeywordSetId, setSelectedKeywordSetId] = useState(null)
@@ -47,10 +50,39 @@ export default function Dashboard() {
     setMonitorToEdit(null)
   }
 
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem(INTRO_STORAGE_KEY)) {
+        setShowIntro(true)
+      }
+    } catch {
+      /* ignore */
+    }
+  }, [])
+
+  const dismissIntro = () => {
+    try {
+      localStorage.setItem(INTRO_STORAGE_KEY, 'true')
+    } catch {
+      /* ignore */
+    }
+    setShowIntro(false)
+    setShowIntroHelp(false)
+  }
+
   const activeKeywordSets = useMemo(
     () => keywordSets.filter((k) => k.active !== false),
     [keywordSets]
   )
+
+  const openNewMonitor = () => {
+    if (activeKeywordSets.length >= 3) {
+      setShowLimitModal(true)
+    } else {
+      setMonitorToEdit(null)
+      setShowMonitorModal(true)
+    }
+  }
 
   const [scanUiPhase, setScanUiPhase] = useState('scanning')
 
@@ -181,14 +213,7 @@ export default function Dashboard() {
           className="signal-btn-focus w-full rounded-md border-none py-3 font-mono text-[13px] font-semibold tracking-wide"
           style={{ background: 'var(--accent)', color: '#09090f' }}
           disabled={pageLoading}
-          onClick={() => {
-            if (activeKeywordSets.length >= 3) {
-              setShowLimitModal(true)
-            } else {
-              setMonitorToEdit(null)
-              setShowMonitorModal(true)
-            }
-          }}
+          onClick={openNewMonitor}
         >
           New Monitor
         </button>
@@ -270,9 +295,19 @@ export default function Dashboard() {
           PERFORMANCE
         </button>
 
-        <p className="pt-8 text-[12px]" style={{ color: 'var(--muted)' }}>
-          {email}
-        </p>
+        <div className="pt-8">
+          <button
+            type="button"
+            className="signal-btn-focus mb-2 border-none bg-transparent p-0 font-mono text-[11px]"
+            style={{ color: 'var(--text-3)', letterSpacing: '0.12em' }}
+            onClick={() => setShowIntroHelp(true)}
+          >
+            Help
+          </button>
+          <p className="m-0 text-[12px]" style={{ color: 'var(--muted)' }}>
+            {email}
+          </p>
+        </div>
       </aside>
 
       <main className="ml-[260px] flex-1" style={{ minHeight: '100vh' }}>
@@ -449,6 +484,29 @@ export default function Dashboard() {
       />
 
       <LimitModal isOpen={showLimitModal} onClose={() => setShowLimitModal(false)} />
+
+      <IntroModal
+        isOpen={showIntro || showIntroHelp}
+        persistSeen={!showIntroHelp}
+        onClose={() => {
+          if (showIntroHelp) {
+            setShowIntroHelp(false)
+          } else {
+            dismissIntro()
+          }
+        }}
+        onStart={() => {
+          if (showIntroHelp) {
+            setShowIntroHelp(false)
+          } else {
+            dismissIntro()
+          }
+        }}
+        onCreateFirstMonitor={() => {
+          if (showIntroHelp) setShowIntroHelp(false)
+          openNewMonitor()
+        }}
+      />
     </div>
   )
 }
