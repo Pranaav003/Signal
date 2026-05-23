@@ -20,6 +20,10 @@ services:
         value: production
       - key: SKIP_EMBEDDED_WORKERS
         value: "true"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: FRONTEND_URL
+        value: https://signal-frontend-e4oa.onrender.com
       - key: DATABASE_URL
         value: postgresql://neondb_owner:npg_uZUv5znhX3yp@ep-winter-night-apz1odea-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require
       - key: REDIS_URL
