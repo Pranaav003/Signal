@@ -58,11 +58,62 @@ async function verifyRedis() {
   }
 }
 
+function withTimeout(promise, ms, label) {
+  const timeoutMs = Number(ms) > 0 ? Number(ms) : 30_000;
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+    }),
+  ]);
+}
+
+async function probeRedditAtStartup() {
+  if (process.env.SKIP_REDDIT_STARTUP_PROBE === 'true') {
+    console.log('[worker] Reddit startup probe skipped (SKIP_REDDIT_STARTUP_PROBE=true)');
+    return;
+  }
+
+  const probeMs = Number(process.env.REDDIT_STARTUP_PROBE_MS) || 20_000;
+  try {
+    const redditCheck = await withTimeout(
+      validateRedditCredentials(),
+      probeMs,
+      'Reddit startup probe'
+    );
+    if (!redditCheck.ok) {
+      console.warn(
+        '⚠ Reddit startup probe failed; scans may return 0 leads until proxies work.'
+      );
+      console.warn(
+        '  ',
+        sanitizeRedditMessage(redditCheck.error?.message || 'Unknown error')
+      );
+      return;
+    }
+    console.log(
+      `✓ Reddit startup probe OK (sample results: ${redditCheck.sample_count ?? 0})`
+    );
+  } catch (err) {
+    console.warn(
+      '[worker] Reddit startup probe skipped:',
+      err && err.message ? err.message : err
+    );
+  }
+}
+
 async function startWorker() {
   await verifyRedis();
 
   try {
-    const summary = await pruneStaleBullQueues();
+    const pruneMs = Number(process.env.REDIS_PRUNE_TIMEOUT_MS) || 30_000;
+    const summary = await withTimeout(
+      pruneStaleBullQueues(),
+      pruneMs,
+      'Redis prune'
+    );
     const detail = formatCleanupSummary(summary);
     if (/removed [1-9]|orphan repeatables=[1-9]/.test(detail)) {
       console.log(`✓ Redis pruned stale Bull data — ${detail}`);
@@ -73,21 +124,6 @@ async function startWorker() {
     console.warn(
       '[worker] Redis prune skipped:',
       err && err.message ? err.message : err
-    );
-  }
-
-  const redditCheck = await validateRedditCredentials();
-  if (!redditCheck.ok) {
-    console.error(
-      '✗ Reddit public JSON API unreachable; scans may return 0 leads until fixed.'
-    );
-    console.error(
-      '  ',
-      sanitizeRedditMessage(redditCheck.error?.message || 'Unknown error')
-    );
-  } else {
-    console.log(
-      `✓ Reddit public JSON API OK (sample results: ${redditCheck.sample_count ?? 0})`
     );
   }
 
@@ -104,8 +140,10 @@ async function startWorker() {
   console.log(`✓ Redis: ${redactRedisUrl(REDIS_URL)} (db ${getRedisDbIndex()})`);
   console.log(`✓ Manual scan queue: ${MANUAL_SCAN_QUEUE_NAME}`);
   console.log(`✓ Scheduled scan queue: ${SCAN_QUEUE_NAME}`);
-  console.log('✓ Worker heartbeat: signal:worker:heartbeat (every 10s)');
+  console.log('✓ Worker heartbeat: signal:worker:heartbeat');
   console.log('✓ Reply tracker worker listening');
+
+  void probeRedditAtStartup();
 }
 
 module.exports = { startWorker };

@@ -10,14 +10,16 @@ const app = express();
 
 let workerStarted = false;
 let workerStartError = null;
+let workerStartupPhase = 'pending';
 const startedAt = new Date().toISOString();
 
 app.get('/health', (req, res) => {
   res.json({
-    ok: !workerStartError,
+    ok: workerStarted && !workerStartError,
     service: 'signal-worker-web',
     mode: 'bull-worker-inside-render-web-service',
     workerStarted,
+    workerStartupPhase,
     workerStartError: workerStartError
       ? String(workerStartError.message || workerStartError)
       : null,
@@ -29,6 +31,11 @@ app.get('/health', (req, res) => {
       process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN
     ),
     openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
+    proxyConfigured: Boolean(
+      process.env.PROXY_LIST &&
+        (process.env.PROXY_USERNAMES || process.env.PROXY_USERNAME) &&
+        process.env.PROXY_PASSWORD
+    ),
   });
 });
 
@@ -43,12 +50,15 @@ app.listen(PORT, async () => {
   console.log(`[worker-web] health server listening on ${PORT}`);
 
   try {
+    workerStartupPhase = 'starting';
     const { startWorker } = require('./src/jobs/worker');
     await startWorker();
     workerStarted = true;
+    workerStartupPhase = 'ready';
     console.log('[worker-web] Bull worker started successfully');
   } catch (err) {
     workerStartError = err;
+    workerStartupPhase = 'failed';
     console.error('[worker-web] failed to start worker:', err);
   }
 });
