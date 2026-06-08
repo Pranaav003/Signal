@@ -331,6 +331,13 @@ export default function AddMonitorModal({
         msg = serverMsg || 'Session issue. Refresh and try again.'
       } else if (err?.response?.status === 500 && !serverMsg) {
         msg = 'Failed to create keyword set. Check backend logs.'
+      } else if (code === 'cors_blocked') {
+        msg =
+          serverMsg ||
+          'Backend blocked this site (CORS). Set FRONTEND_URL to your app URL on signal-backend and redeploy.'
+      } else if (!err?.response && err?.message === 'Network Error') {
+        msg =
+          'Cannot reach the API. Check that signal-backend is running and allows your domain (FRONTEND_URL / CORS).'
       }
 
       setSubmitError(typeof msg === 'string' ? msg : 'Something went wrong.')

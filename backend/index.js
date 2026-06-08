@@ -27,18 +27,54 @@ if (process.env.TRUST_PROXY === 'true' || process.env.NODE_ENV === 'production')
 
 const isDev = process.env.NODE_ENV !== 'production';
 
-const allowedOrigins = [
-  'http://localhost:5173',
-  'http://localhost:3000',
-  'https://signal-frontend-e4oa.onrender.com',
-  process.env.FRONTEND_URL,
-].filter(Boolean);
+function normalizeOrigin(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    return `${url.protocol}//${url.host}`;
+  } catch {
+    return raw.replace(/\/$/, '');
+  }
+}
+
+function withWwwAliases(origin) {
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return [];
+  const aliases = new Set([normalized]);
+  try {
+    const url = new URL(normalized);
+    if (url.hostname.startsWith('www.')) {
+      url.hostname = url.hostname.slice(4);
+      aliases.add(url.toString().replace(/\/$/, ''));
+    } else {
+      url.hostname = `www.${url.hostname}`;
+      aliases.add(url.toString().replace(/\/$/, ''));
+    }
+  } catch {
+    /* ignore invalid URL */
+  }
+  return [...aliases];
+}
+
+const allowedOrigins = new Set(
+  [
+    'http://localhost:5173',
+    'http://localhost:3000',
+    'https://signal-frontend-e4oa.onrender.com',
+    process.env.FRONTEND_URL,
+    ...(process.env.CORS_EXTRA_ORIGINS || '').split(','),
+  ]
+    .flatMap((entry) => withWwwAliases(entry))
+    .filter(Boolean)
+);
 
 const corsOptions = {
   origin(origin, callback) {
     if (!origin) return callback(null, true);
 
-    if (allowedOrigins.includes(origin)) {
+    const normalized = normalizeOrigin(origin);
+    if (normalized && allowedOrigins.has(normalized)) {
       return callback(null, true);
     }
 
