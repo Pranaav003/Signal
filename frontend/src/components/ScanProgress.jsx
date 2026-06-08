@@ -184,6 +184,7 @@ export default function ScanProgress({
   onComplete,
   onScanComplete,
   onScanReady,
+  onMonitorInactive,
   estimatedTotalMs: estimatedTotalMsProp,
 }) {
   const keywordSetId = keywordSet?.id ?? null
@@ -349,6 +350,10 @@ export default function ScanProgress({
     completedRef.current = true
     stopPolling()
     clearAllTimers()
+
+    if (result.monitorInactive) {
+      void onMonitorInactive?.()
+    }
 
     const finalCount = Number(result.leadsFound || 0)
     leadsFoundRef.current = finalCount
@@ -548,10 +553,16 @@ export default function ScanProgress({
           pollCancelledRef.current = true
           applyTerminalResult({
             status: 'failed',
+            monitorInactive: Boolean(e?.response?.data?.inactive),
             leadsFound: Number(leadsFoundRef.current || 0),
             message:
               e?.response?.data?.message ||
               'This monitor is no longer active. Select your current monitor from the sidebar.',
+          })
+          void onScanReady?.({
+            status: 'failed',
+            leadsFound: Number(leadsFoundRef.current || 0),
+            monitorInactive: Boolean(e?.response?.data?.inactive),
           })
           return
         }
@@ -843,10 +854,16 @@ export default function ScanProgress({
           pollCancelledRef.current = true
           applyTerminalResult({
             status: 'failed',
+            monitorInactive: Boolean(e?.response?.data?.inactive),
             leadsFound: Number(leadsFoundRef.current || 0),
             message:
               e?.response?.data?.message ||
               'This monitor is no longer active. Select your current monitor from the sidebar.',
+          })
+          void onScanReady?.({
+            status: 'failed',
+            leadsFound: Number(leadsFoundRef.current || 0),
+            monitorInactive: Boolean(e?.response?.data?.inactive),
           })
           return
         }

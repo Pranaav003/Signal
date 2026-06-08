@@ -345,7 +345,32 @@ async function processScanJob(job) {
 
     let keywordSet = rows[0];
 
-    if (!keywordSet || !keywordSet.active) {
+    if (!keywordSet) {
+      console.warn(`[scan] skip missing keywordSetId=${keywordSetId}`);
+      return;
+    }
+
+    if (keywordSet.active === false) {
+      const skippedScanRunId = queuedScanRunId || keywordSet.current_scan_run_id || null;
+      console.warn(
+        `[scan] skip inactive monitor keywordSetId=${keywordSetId} scanRunId=${skippedScanRunId || 'n/a'}`
+      );
+      if (skippedScanRunId) {
+        try {
+          await finishScanRun(
+            pool,
+            skippedScanRunId,
+            'cancelled',
+            {},
+            'Monitor deleted or inactive'
+          );
+        } catch (finishErr) {
+          console.warn(
+            `[scan] could not cancel scan run for inactive monitor keywordSetId=${keywordSetId}:`,
+            finishErr?.message || finishErr
+          );
+        }
+      }
       return;
     }
 

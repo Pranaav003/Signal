@@ -400,7 +400,22 @@ export default function Dashboard() {
                       <ScanProgress
                         keywordSet={scanningKeywordSet}
                         onScanComplete={refreshLeads}
-                        onScanReady={async ({ status, leadsFound }) => {
+                        onMonitorInactive={async () => {
+                          setScanningKeywordSet(null)
+                          setScanUiPhase('scanning')
+                          setTab('all')
+                          await refetchKeywordSets()
+                          await refreshLeads()
+                        }}
+                        onScanReady={async ({ status, leadsFound, monitorInactive }) => {
+                          if (monitorInactive) {
+                            setScanningKeywordSet(null)
+                            setScanUiPhase('scanning')
+                            setTab('all')
+                            await refetchKeywordSets()
+                            await refreshLeads()
+                            return
+                          }
                           if (status !== 'complete' && status !== 'failed') return
                           setScanUiPhase('complete')
                           const kid = scanningKeywordSet?.id

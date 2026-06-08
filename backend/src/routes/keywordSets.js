@@ -309,10 +309,14 @@ router.get('/:id/scan-status', async (req, res) => {
     const keywordSet = ksResult.rows[0];
 
     if (keywordSet.active === false) {
+      const deletedAt = keywordSet.deleted_at || null;
       return res.status(404).json({
         error: 'keyword_set_not_found',
         inactive: true,
-        message: 'This monitor no longer exists or is inactive.',
+        deleted_at: deletedAt,
+        message: deletedAt
+          ? 'This monitor was deleted. Select another monitor from the sidebar or create a new one.'
+          : 'This monitor is inactive. Select another monitor from the sidebar or create a new one.',
       });
     }
 
