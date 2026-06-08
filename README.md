@@ -206,7 +206,7 @@ This preserves the **working Bull/Redis/worker architecture**. The worker is dep
 | Redis/Bull | **Upstash** TCP `REDIS_URL` (`rediss://…`) — Bull uses this, **not** Upstash REST |
 | Keepalive | **UptimeRobot** pings backend and worker-web `/health` |
 
-**Committed config:** `render.yaml` and `backend/.env.render.example` include **rotated placeholder** Neon/Upstash values showing the exact format. **Replace with fresh Neon/Upstash credentials before a real deployment.** `OPENAI_API_KEY` stays `sync: false` in the blueprint — add it in the Render dashboard.
+**Secrets:** Do **not** commit real `DATABASE_URL`, `REDIS_URL`, `PROXY_PASSWORD`, or API keys. `render.yaml` uses `sync: false` for those — set them only in the Render dashboard. See `backend/.env.render.example` for variable names and formats.
 
 `UPSTASH_REDIS_REST_URL` / `UPSTASH_REDIS_REST_TOKEN` are optional reference env vars only; Bull/ioredis use `REDIS_URL`.
 
