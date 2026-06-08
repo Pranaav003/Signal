@@ -21,6 +21,7 @@ const {
   getRedisDbIndex,
 } = require('./queueFactory');
 const { isWorkerAlive } = require('../services/workerHeartbeat');
+const { sanitizeRedditMessage } = require('../services/redditService');
 
 const scanQueue = createBullQueue(SCAN_QUEUE_NAME);
 const manualScanQueue = createBullQueue(MANUAL_SCAN_QUEUE_NAME);
@@ -223,7 +224,7 @@ async function addScanJob(keywordSetId, userId) {
       jobId,
       priority: MANUAL_JOB_PRIORITY,
       removeOnComplete: true,
-      removeOnFail: 50,
+      removeOnFail: Number(process.env.REDIS_FAILED_JOBS_TO_KEEP) || 5,
     }
   );
 
@@ -247,7 +248,7 @@ async function addScanJob(keywordSetId, userId) {
         jobId,
         priority: MANUAL_JOB_PRIORITY,
         removeOnComplete: true,
-        removeOnFail: 50,
+        removeOnFail: Number(process.env.REDIS_FAILED_JOBS_TO_KEEP) || 5,
       }
     );
   }
@@ -289,6 +290,8 @@ async function rescheduleRepeatableScanForKeywordSet(keywordSetId) {
       repeat: { every },
       jobId: jobIdStr,
       priority: REPEAT_JOB_PRIORITY,
+      removeOnComplete: true,
+      removeOnFail: Number(process.env.REDIS_FAILED_JOBS_TO_KEEP) || 5,
       ...SCAN_QUEUE_JOB_OPTS,
     }
   );
@@ -459,7 +462,8 @@ async function processScanJob(job) {
         }
       }
 
-      console.error(`Scan job failed [${keywordSetId}]:`, msg);
+      const safeMsg = sanitizeRedditMessage(msg);
+      console.error(`Scan job failed [${keywordSetId}]:`, safeMsg);
       if (
         err?.redditError?.code === 'REDDIT_BLOCKED' ||
         err?.redditError?.code === 'REDDIT_AUTH_FAILED' ||
@@ -471,17 +475,17 @@ async function processScanJob(job) {
             keywordSetId,
             JSON.stringify({
               phase: 'error',
-              message: msg,
+              message: safeMsg,
               reddit_auth_error: true,
               completed_at: new Date().toISOString(),
             }),
           ]
         );
       } else {
-        await finishScanFailure(keywordSetId, msg);
+        await finishScanFailure(keywordSetId, safeMsg);
       }
       if (scanRunId) {
-        await finishScanRun(pool, scanRunId, 'failed', {}, msg);
+        await finishScanRun(pool, scanRunId, 'failed', {}, safeMsg);
       }
       throw err;
     }

@@ -33,8 +33,8 @@ Set `DATABASE_URL` in `backend/.env` (see `.env.example`). For the default Homeb
 ```bash
 cd backend
 cp .env.example .env
-# Edit .env: set DATABASE_URL, REDIS_URL, REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET,
-# REDDIT_USER_AGENT, OPENAI_API_KEY (and JWT_SECRET for future auth).
+# Edit .env: set DATABASE_URL, REDIS_URL, REDDIT_USER_AGENT, PROXY_* (optional),
+# OPENAI_API_KEY (and JWT_SECRET for future auth).
 npm install
 npm run migrate
 npm run dev
@@ -101,9 +101,13 @@ Prints scored Reddit results to the console (requires Reddit credentials in `.en
 | DATABASE_URL | PostgreSQL connection string |
 | REDIS_URL | Redis connection string (`rediss://` for Upstash TLS) |
 | WORKER_WEB_PORT | Optional local port for `npm run start:worker-web` (default 3002; use when `.env` sets `PORT=3001` for API) |
-| REDDIT_CLIENT_ID | From reddit.com/prefs/apps |
-| REDDIT_CLIENT_SECRET | From reddit.com/prefs/apps |
-| REDDIT_USER_AGENT | Format: `Signal/1.0 by YourUsername` (Render blueprint sets a default; override if you prefer) |
+| REDDIT_USER_AGENT | Format: `Signal/1.0 (by /u/YourUsername)` |
+| PROXY_PASSWORD | Webshare proxy password (shared across regions) |
+| PROXY_LIST | Proxy gateway `host:port` — `p.webshare.io:80` for Webshare backbone |
+| PROXY_USERNAMES | Comma-separated regional usernames (e.g. `qcceojoh-gb-1,qcceojoh-ca-2,…`) |
+| PROXY_USERNAME | Legacy single username; use `PROXY_USERNAMES` for residential rotation |
+| PROXY_ROTATING | Set `true` when using a single rotating gateway (auto-detected for `*.webshare.io`) |
+| PROXY_ENABLED | Set `false` to disable proxying (debugging) |
 | OPENAI_API_KEY | From platform.openai.com (ChatGPT / OpenAI API) |
 | OPENAI_MODEL | Optional; default `gpt-4o-mini` |
 | JWT_SECRET | Random string; auto-generated on Render for the web service |
@@ -209,7 +213,9 @@ This preserves the **working Bull/Redis/worker architecture**. The worker is dep
 **Caveats (demo/MVP):**
 
 - Free Render web services **sleep** after inactivity; scans may queue until UptimeRobot wakes the worker.
-- Upstash free tier has command limits.
+- Upstash free tier limits **Redis commands** (500k/month), not storage bytes. Bull queue polling + heartbeats consume commands even when idle.
+- Worker startup runs automatic Bull cleanup (`pruneStaleBullQueues`). Manual: `npm run cleanup:redis`.
+- Completed jobs are removed immediately; only the last few failed jobs are kept (`REDIS_FAILED_JOBS_TO_KEEP`, default 5).
 - OpenAI is not free without credits.
 - For production reliability, use a paid real worker service later.
 

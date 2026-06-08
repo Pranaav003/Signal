@@ -42,7 +42,7 @@ async function main() {
     if (code === 'REDDIT_BLOCKED' || code === 'REDDIT_AUTH_FAILED' || code === 'REDDIT_RATE_LIMITED') {
       console.warn(
         `\nSKIP: Reddit unavailable during live pipeline test (${code || err.message}). ` +
-          'Cap/classifier checks require a successful fetch — retry later or set REDDIT OAuth.'
+          'Cap/classifier checks require a successful fetch — retry later or check PROXY_LIST.'
       );
       process.exit(0);
     }

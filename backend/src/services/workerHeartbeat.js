@@ -7,8 +7,8 @@ const {
 } = require('../jobs/queueFactory');
 
 const HEARTBEAT_KEY = 'signal:worker:heartbeat';
-const HEARTBEAT_INTERVAL_MS = 10_000;
-const HEARTBEAT_TTL_SEC = 30;
+const HEARTBEAT_INTERVAL_MS = Number(process.env.WORKER_HEARTBEAT_INTERVAL_MS) || 30_000;
+const HEARTBEAT_TTL_SEC = Number(process.env.WORKER_HEARTBEAT_TTL_SEC) || 90;
 
 let heartbeatTimer = null;
 let heartbeatClient = null;

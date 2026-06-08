@@ -4,10 +4,10 @@ if (process.env.USE_MOCK_REDDIT === 'true') {
 }
 
 const axios = require('axios');
+const { HttpsProxyAgent } = require('https-proxy-agent');
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const tokenCache = { token: null, expiresAt: 0 };
 let lastRequestTime = 0;
 
 const configuredDelay = Number(process.env.REDDIT_REQUEST_DELAY_MS);
@@ -16,67 +16,169 @@ const MIN_INTERVAL_MS =
     ? Math.max(configuredDelay, 1500)
     : 2000;
 
-function userAgent() {
+const DEFAULT_PROXY_USERNAMES = [
+  'qcceojoh-gb-1',
+  'qcceojoh-ca-2',
+  'qcceojoh-de-3',
+  'qcceojoh-fr-4',
+  'qcceojoh-au-5',
+  'qcceojoh-nl-6',
+  'qcceojoh-it-7',
+  'qcceojoh-es-8',
+  'qcceojoh-be-9',
+  'qcceojoh-at-10',
+].join(',');
+
+const PROXY_LIST = (
+  process.env.PROXY_LIST ||
+  (process.env.PROXY_HOST
+    ? `${process.env.PROXY_HOST}:${process.env.PROXY_PORT || 80}`
+    : 'p.webshare.io:80')
+)
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
+const PROXY_USERNAMES = (
+  process.env.PROXY_USERNAMES ||
+  process.env.PROXY_USERNAME ||
+  DEFAULT_PROXY_USERNAMES
+)
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter(Boolean);
+
+const PROXY_PASSWORD = process.env.PROXY_PASSWORD || 'ux6ov8h3qm1o';
+
+function pickProxyUsername(excludeUsername) {
+  const pool = excludeUsername
+    ? PROXY_USERNAMES.filter((name) => name !== excludeUsername)
+    : PROXY_USERNAMES;
+  const source = pool.length ? pool : PROXY_USERNAMES;
+  return source[Math.floor(Math.random() * source.length)];
+}
+
+function buildProxyConfig(entry, username) {
+  const [host, port] = String(entry || '').split(':');
+  if (!host || !port) return null;
+  const resolvedUsername = username || pickProxyUsername();
+  if (!resolvedUsername) return null;
+  return {
+    protocol: 'http',
+    host,
+    port: Number(port),
+    auth: { username: resolvedUsername, password: PROXY_PASSWORD },
+  };
+}
+
+function getProxy(entry, username) {
+  if (process.env.PROXY_ENABLED === 'false') return null;
+  if (!PROXY_LIST.length || !PROXY_USERNAMES.length) return null;
+  const chosen = entry || PROXY_LIST[Math.floor(Math.random() * PROXY_LIST.length)];
+  return buildProxyConfig(chosen, username);
+}
+
+function proxyAgentFor(proxy) {
+  if (!proxy) return null;
+  const auth =
+    proxy.auth?.username && proxy.auth?.password
+      ? `${encodeURIComponent(proxy.auth.username)}:${encodeURIComponent(proxy.auth.password)}@`
+      : '';
+  const url = `${proxy.protocol || 'http'}://${auth}${proxy.host}:${proxy.port}`;
+  return new HttpsProxyAgent(url);
+}
+
+function isRotatingProxy() {
+  if (process.env.PROXY_ROTATING === 'true') return true;
+  if (process.env.PROXY_ROTATING === 'false') return false;
   return (
-    process.env.REDDIT_USER_AGENT ||
-    'Mozilla/5.0 (compatible; Signal/1.0; +https://github.com/signal)'
+    PROXY_USERNAMES.length > 1 ||
+    (PROXY_LIST.length === 1 && /webshare\.io/i.test(PROXY_LIST[0]))
   );
 }
 
-function oauthCredentialsPresent() {
-  return Boolean(
-    process.env.REDDIT_CLIENT_ID &&
-      process.env.REDDIT_CLIENT_SECRET &&
-      process.env.REDDIT_USER_AGENT
+function shuffledProxyUsernames() {
+  const usernames = [...PROXY_USERNAMES];
+  for (let i = usernames.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [usernames[i], usernames[j]] = [usernames[j], usernames[i]];
+  }
+  return usernames;
+}
+
+function shuffledProxyEntries() {
+  const entries = [...PROXY_LIST];
+  for (let i = entries.length - 1; i > 0; i -= 1) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [entries[i], entries[j]] = [entries[j], entries[i]];
+  }
+  return entries;
+}
+
+function userAgent() {
+  return (
+    process.env.REDDIT_USER_AGENT ||
+    'Signal/1.0 (by /u/Pranaav003; lead monitor; +https://github.com/Pranaav003/Signal)'
+  );
+}
+
+function sanitizeRedditMessage(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return 'Reddit API error';
+
+  if (
+    /blocked by network security/i.test(text) ||
+    /<!doctype html|<html|<body class=/i.test(text)
+  ) {
+    return 'Reddit blocked this request (network security). Try another proxy in PROXY_LIST or set PROXY_ENABLED=false to debug without a proxy.';
+  }
+
+  if (text.length > 280) return `${text.slice(0, 277)}...`;
+  return text;
+}
+
+function isRedditHtmlBlock(body) {
+  if (body == null) return false;
+  const text = typeof body === 'string' ? body : JSON.stringify(body);
+  return (
+    /blocked by network security/i.test(text) ||
+    /<!doctype html|<html|<body class=/i.test(text)
   );
 }
 
 function resolveRedditMode() {
-  const raw = String(process.env.REDDIT_MODE || 'auto').toLowerCase();
-  if (raw === 'oauth') {
-    if (!oauthCredentialsPresent()) {
-      throw new Error(
-        'REDDIT_MODE=oauth but REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET, or REDDIT_USER_AGENT is missing'
-      );
-    }
-    return 'oauth';
-  }
-  if (raw === 'public_json') return 'public_json';
-  return oauthCredentialsPresent() ? 'oauth' : 'public_json';
+  return 'public_json';
 }
 
 function getActiveRedditMode() {
-  try {
-    return resolveRedditMode();
-  } catch {
-    return 'public_json';
-  }
+  return 'public_json';
 }
 
 function parseRedditError(err) {
   const status = err?.response?.status;
   const body = err?.response?.data;
-  const message =
+  const rawMessage =
     (typeof body === 'string' && body) ||
     body?.message ||
     body?.error ||
     err?.message ||
     'Reddit API error';
+  const message = sanitizeRedditMessage(rawMessage);
 
-  if (status === 401 || status === 403) {
+  if (status === 401 || status === 403 || isRedditHtmlBlock(body)) {
     return {
       code: status === 401 ? 'REDDIT_AUTH_FAILED' : 'REDDIT_BLOCKED',
-      status,
-      message: String(message),
+      status: status || 403,
+      message,
     };
   }
   if (status === 429) {
-    return { code: 'REDDIT_RATE_LIMITED', status, message: String(message) };
+    return { code: 'REDDIT_RATE_LIMITED', status, message };
   }
   return {
     code: 'REDDIT_API_ERROR',
     status: status || null,
-    message: String(message),
+    message,
   };
 }
 
@@ -136,77 +238,124 @@ function listingToItems(listing) {
   return [...listing.posts, ...listing.comments];
 }
 
-async function jsonGet(url, params = {}, attempt = 1) {
+async function jsonGet(url, params = {}, attempt = 1, proxyEntry = null, proxyUsername = null) {
   await enforceRateLimit();
   try {
-    const { data } = await axios.get(url, {
+    const proxy = getProxy(proxyEntry, proxyUsername);
+    const agent = proxyAgentFor(proxy);
+    const { data, headers, status } = await axios.get(url, {
       params: { ...params, raw_json: 1 },
       headers: { 'User-Agent': userAgent(), Accept: 'application/json' },
       timeout: 30000,
+      validateStatus: (httpStatus) => httpStatus >= 200 && httpStatus < 500,
+      proxy: false,
+      ...(agent && { httpAgent: agent, httpsAgent: agent }),
     });
+
+    if (status >= 400) {
+      const error = parseRedditError({ response: { status, data } });
+      const wrapped = new Error(error.message);
+      wrapped.redditError = error;
+      wrapped.proxyEntry = proxyEntry;
+      wrapped.proxyUsername = proxyUsername;
+      throw wrapped;
+    }
+
+    const contentType = String(headers?.['content-type'] || '');
+    if (isRedditHtmlBlock(data) || /text\/html/i.test(contentType)) {
+      const error = {
+        code: 'REDDIT_BLOCKED',
+        status: 403,
+        message: sanitizeRedditMessage(
+          typeof data === 'string' ? data : 'Reddit returned an HTML block page instead of JSON.'
+        ),
+      };
+      const wrapped = new Error(error.message);
+      wrapped.redditError = error;
+      wrapped.proxyEntry = proxyEntry;
+      wrapped.proxyUsername = proxyUsername;
+      throw wrapped;
+    }
+
+    if (!data || typeof data !== 'object' || !Object.prototype.hasOwnProperty.call(data, 'data')) {
+      const error = {
+        code: 'REDDIT_API_ERROR',
+        status: null,
+        message: 'Reddit returned an unexpected response format.',
+      };
+      const wrapped = new Error(error.message);
+      wrapped.redditError = error;
+      throw wrapped;
+    }
+
     return data;
   } catch (err) {
-    const error = parseRedditError(err);
-    const maxAttempts = Number(process.env.REDDIT_429_MAX_RETRIES) || 3;
-    if (error.code === 'REDDIT_RATE_LIMITED' && attempt < maxAttempts) {
+    const error = err.redditError || parseRedditError(err);
+    const max429Attempts = Number(process.env.REDDIT_429_MAX_RETRIES) || 3;
+    if (error.code === 'REDDIT_RATE_LIMITED' && attempt < max429Attempts) {
       const waitMs = Number(process.env.REDDIT_429_BACKOFF_MS) || 60_000;
       console.warn(
-        `[redditService] Reddit 429 — waiting ${Math.round(waitMs / 1000)}s (retry ${attempt + 1}/${maxAttempts})`
+        `[redditService] Reddit 429 — waiting ${Math.round(waitMs / 1000)}s (retry ${attempt + 1}/${max429Attempts})`
       );
       await sleep(waitMs);
-      return jsonGet(url, params, attempt + 1);
+      return jsonGet(url, params, attempt + 1, proxyEntry, proxyUsername);
     }
+
+    if (
+      proxyEnabled() &&
+      (error.code === 'REDDIT_BLOCKED' || error.code === 'REDDIT_AUTH_FAILED')
+    ) {
+      const maxBlockRetries =
+        Number(process.env.REDDIT_PROXY_BLOCK_RETRIES) ||
+        (isRotatingProxy() ? Math.max(PROXY_USERNAMES.length, 5) : PROXY_LIST.length);
+
+      if (isRotatingProxy() && attempt < maxBlockRetries) {
+        const nextUser = pickProxyUsername(proxyUsername);
+        console.warn(
+          `[redditService] Reddit blocked — retry ${attempt + 1}/${maxBlockRetries} via ${nextUser}`
+        );
+        await sleep(750);
+        return jsonGet(url, params, attempt + 1, proxyEntry || PROXY_LIST[0], nextUser);
+      }
+
+      const triedUsers = new Set([proxyUsername].filter(Boolean));
+      for (const nextUser of shuffledProxyUsernames()) {
+        if (triedUsers.has(nextUser)) continue;
+        triedUsers.add(nextUser);
+        console.warn(
+          `[redditService] Reddit blocked via ${proxyUsername || 'direct'} — retrying ${nextUser}`
+        );
+        try {
+          return await jsonGet(url, params, attempt, proxyEntry || PROXY_LIST[0], nextUser);
+        } catch (retryErr) {
+          const retryError = retryErr.redditError || parseRedditError(retryErr);
+          if (retryError.code !== 'REDDIT_BLOCKED' && retryError.code !== 'REDDIT_AUTH_FAILED') {
+            throw retryErr;
+          }
+        }
+      }
+
+      const triedEntries = new Set([proxyEntry].filter(Boolean));
+      for (const nextEntry of shuffledProxyEntries()) {
+        if (triedEntries.has(nextEntry)) continue;
+        triedEntries.add(nextEntry);
+        const nextUser = pickProxyUsername();
+        console.warn(`[redditService] Reddit blocked — retrying ${nextEntry} as ${nextUser}`);
+        try {
+          return await jsonGet(url, params, attempt, nextEntry, nextUser);
+        } catch (retryErr) {
+          const retryError = retryErr.redditError || parseRedditError(retryErr);
+          if (retryError.code !== 'REDDIT_BLOCKED' && retryError.code !== 'REDDIT_AUTH_FAILED') {
+            throw retryErr;
+          }
+        }
+      }
+    }
+
     const wrapped = new Error(error.message);
     wrapped.redditError = error;
     throw wrapped;
   }
-}
-
-async function oauthGet(token, url, params) {
-  await enforceRateLimit();
-  const { data } = await axios.get(url, {
-    params,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      'User-Agent': userAgent(),
-    },
-    timeout: 30000,
-  });
-  return data;
-}
-
-async function getAccessToken() {
-  if (!oauthCredentialsPresent()) {
-    const err = new Error('Reddit OAuth credentials missing');
-    err.redditError = { code: 'REDDIT_AUTH_FAILED', message: err.message };
-    throw err;
-  }
-
-  const t = Math.floor(Date.now() / 1000);
-  if (tokenCache.token && t < tokenCache.expiresAt - 60) {
-    return tokenCache.token;
-  }
-
-  await enforceRateLimit();
-  const { data } = await axios.post(
-    'https://www.reddit.com/api/v1/access_token',
-    'grant_type=client_credentials',
-    {
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        'User-Agent': userAgent(),
-      },
-      auth: {
-        username: process.env.REDDIT_CLIENT_ID,
-        password: process.env.REDDIT_CLIENT_SECRET,
-      },
-    }
-  );
-
-  tokenCache.token = data.access_token;
-  const ttl = Number(data.expires_in);
-  tokenCache.expiresAt = t + (Number.isFinite(ttl) && ttl > 0 ? ttl : 3300);
-  return tokenCache.token;
 }
 
 function searchLimit() {
@@ -286,110 +435,18 @@ async function searchSubredditPublicStructured(subreddit, query) {
   }
 }
 
-async function searchRedditOAuthStructured(query) {
-  try {
-    const token = await getAccessToken();
-    const limit = searchLimit();
-
-    const linkData = await oauthGet(token, 'https://oauth.reddit.com/search', {
-      q: query,
-      sort: 'new',
-      limit,
-      type: 'link',
-    });
-    const commentData = await oauthGet(token, 'https://oauth.reddit.com/search', {
-      q: query,
-      sort: 'new',
-      limit,
-      type: 'comment',
-    });
-
-    const linkListing = normalizeListing(linkData);
-    const commentListing = normalizeListing(commentData);
-    const items = listingToItems(linkListing).concat(listingToItems(commentListing));
-
-    return {
-      ok: true,
-      items,
-      meta: {
-        mode: 'oauth',
-        post_count: linkListing.posts.length + commentListing.posts.length,
-        comment_count: linkListing.comments.length + commentListing.comments.length,
-      },
-    };
-  } catch (err) {
-    const error = err.redditError || parseRedditError(err);
-    if (error.code === 'REDDIT_BLOCKED' || error.code === 'REDDIT_AUTH_FAILED') {
-      throw Object.assign(new Error(error.message), { redditError: error });
-    }
-    return { ok: false, items: [], error, meta: { mode: 'oauth' } };
-  }
-}
-
-async function searchSubredditOAuthStructured(subreddit, query) {
-  try {
-    const token = await getAccessToken();
-    const sub = String(subreddit).replace(/^r\//, '');
-    const base = `https://oauth.reddit.com/r/${sub}/search`;
-    const limit = searchLimit();
-
-    const linkData = await oauthGet(token, base, {
-      q: query,
-      sort: 'new',
-      limit,
-      restrict_sr: true,
-      type: 'link',
-    });
-    const commentData = await oauthGet(token, base, {
-      q: query,
-      sort: 'new',
-      limit,
-      restrict_sr: true,
-      type: 'comment',
-    });
-
-    const linkListing = normalizeListing(linkData);
-    const commentListing = normalizeListing(commentData);
-    const items = listingToItems(linkListing).concat(listingToItems(commentListing));
-
-    return {
-      ok: true,
-      items,
-      meta: {
-        mode: 'oauth',
-        post_count: linkListing.posts.length + commentListing.posts.length,
-        comment_count: linkListing.comments.length + commentListing.comments.length,
-      },
-    };
-  } catch (err) {
-    const error = err.redditError || parseRedditError(err);
-    if (error.code === 'REDDIT_BLOCKED' || error.code === 'REDDIT_AUTH_FAILED') {
-      throw Object.assign(new Error(error.message), { redditError: error });
-    }
-    return { ok: false, items: [], error, meta: { mode: 'oauth' } };
-  }
-}
-
 async function searchRedditStructured(query) {
-  const mode = resolveRedditMode();
-  return mode === 'oauth'
-    ? searchRedditOAuthStructured(query)
-    : searchRedditPublicStructured(query);
+  return searchRedditPublicStructured(query);
 }
 
 async function searchSubredditStructured(subreddit, query) {
-  const mode = resolveRedditMode();
-  return mode === 'oauth'
-    ? searchSubredditOAuthStructured(subreddit, query)
-    : searchSubredditPublicStructured(subreddit, query);
+  return searchSubredditPublicStructured(subreddit, query);
 }
 
 async function validateRedditCredentials() {
   const mode = getActiveRedditMode();
   try {
-    const result = await (mode === 'oauth'
-      ? searchRedditOAuthStructured('small business software')
-      : searchRedditPublicStructured('small business software'));
+    const result = await searchRedditPublicStructured('small business software');
     return {
       ok: result.ok,
       mode,
@@ -412,14 +469,32 @@ async function searchSubreddit(subreddit, query) {
 }
 
 function redditCredentialsPresent() {
-  return oauthCredentialsPresent() || Boolean(userAgent());
+  return Boolean(userAgent());
 }
 
+function proxyEnabled() {
+  return (
+    process.env.PROXY_ENABLED !== 'false' &&
+    PROXY_LIST.length > 0 &&
+    PROXY_USERNAMES.length > 0
+  );
+}
+
+function proxyStatusLabel() {
+  if (!proxyEnabled()) return 'none';
+  const [host, port] = PROXY_LIST[0].split(':');
+  if (PROXY_USERNAMES.length > 1) {
+    return `${host}:${port || 80} (residential, ${PROXY_USERNAMES.length} regions)`;
+  }
+  if (isRotatingProxy()) return `${host}:${port || 80} (rotating)`;
+  return `${host}… (${PROXY_LIST.length} endpoints)`;
+}
+
+console.log(`[redditService] mode=${getActiveRedditMode()} proxy=${proxyStatusLabel()}`);
+
 module.exports = {
-  getAccessToken,
   validateRedditCredentials,
   redditCredentialsPresent,
-  oauthCredentialsPresent,
   resolveRedditMode,
   getActiveRedditMode,
   searchReddit,
@@ -428,7 +503,8 @@ module.exports = {
   searchSubredditStructured,
   searchRedditPublicStructured,
   searchSubredditPublicStructured,
-  searchRedditOAuthStructured,
-  searchSubredditOAuthStructured,
   parseRedditError,
+  sanitizeRedditMessage,
+  getProxy,
+  proxyEnabled,
 };

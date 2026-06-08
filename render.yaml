@@ -27,13 +27,21 @@ services:
       - key: DATABASE_URL
         value: postgresql://neondb_owner:npg_uZUv5znhX3yp@ep-winter-night-apz1odea-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require
       - key: REDIS_URL
-        value: rediss://default:gQAAAAAAAeJAAAIgcDI2YjY4ZDJjZjczMjU0ODk1YmQ0ZjgwOWI5YTdiYTlmMg@pet-crawdad-123456.upstash.io:6379
+        value: rediss://default:gQAAAAAAAjSaAAIgcDE4YjdkMWUzNzU0MzQ0YTk4OTgxMDQyMzZhOTU1NjI5MQ@blessed-mantis-144538.upstash.io:6379
       - key: UPSTASH_REDIS_REST_URL
-        value: https://pet-crawdad-123456.upstash.io
+        value: https://blessed-mantis-144538.upstash.io
       - key: UPSTASH_REDIS_REST_TOKEN
-        value: gQAAAAAAAeJAAAIgcDI2YjY4ZDJjZjczMjU0ODk1YmQ0ZjgwOWI5YTdiYTlmMg
+        value: gQAAAAAAAjSaAAIgcDE4YjdkMWUzNzU0MzQ0YTk4OTgxMDQyMzZhOTU1NjI5MQ
       - key: REDDIT_USER_AGENT
-        value: Signal/1.0
+        value: Signal/1.0 (by /u/Pranaav003)
+      - key: REDDIT_REQUEST_DELAY_MS
+        value: "3000"
+      - key: PROXY_PASSWORD
+        value: ux6ov8h3qm1o
+      - key: PROXY_LIST
+        value: p.webshare.io:80
+      - key: PROXY_USERNAMES
+        value: qcceojoh-gb-1,qcceojoh-ca-2,qcceojoh-de-3,qcceojoh-fr-4,qcceojoh-au-5,qcceojoh-nl-6,qcceojoh-it-7,qcceojoh-es-8,qcceojoh-be-9,qcceojoh-at-10
       - key: USE_MOCK_REDDIT
         value: "false"
       - key: OPENAI_API_KEY
@@ -72,13 +80,21 @@ services:
       - key: DATABASE_URL
         value: postgresql://neondb_owner:npg_uZUv5znhX3yp@ep-winter-night-apz1odea-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require
       - key: REDIS_URL
-        value: rediss://default:gQAAAAAAAeJAAAIgcDI2YjY4ZDJjZjczMjU0ODk1YmQ0ZjgwOWI5YTdiYTlmMg@pet-crawdad-123456.upstash.io:6379
+        value: rediss://default:gQAAAAAAAjSaAAIgcDE4YjdkMWUzNzU0MzQ0YTk4OTgxMDQyMzZhOTU1NjI5MQ@blessed-mantis-144538.upstash.io:6379
       - key: UPSTASH_REDIS_REST_URL
-        value: https://pet-crawdad-123456.upstash.io
+        value: https://blessed-mantis-144538.upstash.io
       - key: UPSTASH_REDIS_REST_TOKEN
-        value: gQAAAAAAAeJAAAIgcDI2YjY4ZDJjZjczMjU0ODk1YmQ0ZjgwOWI5YTdiYTlmMg
+        value: gQAAAAAAAjSaAAIgcDE4YjdkMWUzNzU0MzQ0YTk4OTgxMDQyMzZhOTU1NjI5MQ
       - key: REDDIT_USER_AGENT
-        value: Signal/1.0
+        value: Signal/1.0 (by /u/Pranaav003)
+      - key: REDDIT_REQUEST_DELAY_MS
+        value: "3000"
+      - key: PROXY_PASSWORD
+        value: ux6ov8h3qm1o
+      - key: PROXY_LIST
+        value: p.webshare.io:80
+      - key: PROXY_USERNAMES
+        value: qcceojoh-gb-1,qcceojoh-ca-2,qcceojoh-de-3,qcceojoh-fr-4,qcceojoh-au-5,qcceojoh-nl-6,qcceojoh-it-7,qcceojoh-es-8,qcceojoh-be-9,qcceojoh-at-10
       - key: USE_MOCK_REDDIT
         value: "false"
       - key: OPENAI_API_KEY

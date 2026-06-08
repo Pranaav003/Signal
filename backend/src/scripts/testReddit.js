@@ -5,17 +5,14 @@ const {
   searchRedditStructured,
   searchSubredditStructured,
   searchRedditPublicStructured,
-  searchRedditOAuthStructured,
-  oauthCredentialsPresent,
   getActiveRedditMode,
-  resolveRedditMode,
+  proxyEnabled,
 } = require('../services/redditService');
 
 async function main() {
   console.log('\n=== Reddit API smoke test ===\n');
-  console.log('REDDIT_MODE (resolved):', resolveRedditMode());
   console.log('Active mode (worker will use):', getActiveRedditMode());
-  console.log('OAuth credentials present:', oauthCredentialsPresent());
+  console.log('Proxy enabled:', proxyEnabled());
   console.log('REDDIT_USER_AGENT set:', Boolean(process.env.REDDIT_USER_AGENT));
 
   const auth = await validateRedditCredentials();
@@ -45,26 +42,6 @@ async function main() {
       ? `  items: ${pub.items.length} (posts: ${pub.meta?.post_count ?? 0}, comments: ${pub.meta?.comment_count ?? 0})`
       : `  FAILED: ${pub.error?.message}`
   );
-
-  if (oauthCredentialsPresent()) {
-    console.log(`\nsearchRedditOAuthStructured("${globalQ}")`);
-    const oauth = await searchRedditOAuthStructured(globalQ);
-    console.log(
-      oauth.ok
-        ? `  items: ${oauth.items.length} (posts: ${oauth.meta?.post_count ?? 0}, comments: ${oauth.meta?.comment_count ?? 0})`
-        : `  FAILED: ${oauth.error?.message}`
-    );
-    if (pub.ok && oauth.ok) {
-      const diff = oauth.items.length - pub.items.length;
-      console.log(
-        diff >= 0
-          ? `  OAuth returned ${diff} more items than public JSON for this query.`
-          : `  Public JSON returned ${-diff} more items than OAuth for this query.`
-      );
-    }
-  } else {
-    console.log('\nOAuth sample: skipped (no REDDIT_CLIENT_ID/SECRET/USER_AGENT)');
-  }
 
   const subQ = 'recommend accounting software';
   const sub = 'smallbusiness';

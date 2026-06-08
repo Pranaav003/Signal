@@ -4,6 +4,7 @@ import {
   formatZeroLeadsDiagnostic,
   formatLowLeadsDiagnostic,
   formatAiSourceSummary,
+  sanitizeScanErrorMessage,
 } from '../lib/scanDiagnostics'
 
 const PHASES = [
@@ -372,7 +373,7 @@ export default function ScanProgress({
       )
       appendRawLine('success', '━━━━━━━━━━━━━━━━━━━━━━━━━━━')
     } else if (result.status === 'failed') {
-      appendRawLine('warn', result.message || 'Scan failed.')
+      appendRawLine('warn', sanitizeScanErrorMessage(result.message || 'Scan failed.'))
     } else {
       appendRawLine('warn', result.message || 'Scan may be stuck or still queued.')
     }
@@ -502,7 +503,9 @@ export default function ScanProgress({
           leadsFound: Number(leadsFoundRef.current || 0),
           message:
             workerHintRef.current ||
-            'This scan appears queued or stuck. Make sure the worker is running (cd backend && npm run worker).',
+            (import.meta.env.PROD
+              ? 'This scan appears queued or stuck. Check signal-worker-web on Render and keep /health pinged every 5 minutes.'
+              : 'This scan appears queued or stuck. Make sure the worker is running (cd backend && npm run worker).'),
         })
       }
     }, 1000)
@@ -717,7 +720,7 @@ export default function ScanProgress({
               data?.scan_progress?.inserted_count ??
               0
           )
-          const failMsg = String(
+          const failMsg = sanitizeScanErrorMessage(
             data.worker_hint ||
               (data.scan_progress && data.scan_progress.message) ||
               'Scan failed. Check backend logs.'
@@ -1103,7 +1106,7 @@ export default function ScanProgress({
                   Scan failed
                 </p>
                 <p className="mt-2 mb-0 font-mono text-[11px]" style={{ color: 'var(--text-3)' }}>
-                  {terminalResult.message}
+                  {sanitizeScanErrorMessage(terminalResult.message)}
                 </p>
                 <button
                   type="button"
@@ -1184,7 +1187,7 @@ export default function ScanProgress({
                         data.scan_progress?.leads_saved ??
                         0
                     )
-                    const failMsgManual = String(
+                    const failMsgManual = sanitizeScanErrorMessage(
                       data.worker_hint ||
                         data.scan_progress?.message ||
                         'Scan failed.'

@@ -22,6 +22,8 @@ async function startScheduler() {
         jobId: `scan-${ks.id}`,
         attempts: 3,
         backoff: { type: 'exponential', delay: 5000 },
+        removeOnComplete: true,
+        removeOnFail: Number(process.env.REDIS_FAILED_JOBS_TO_KEEP) || 5,
       }
     );
 

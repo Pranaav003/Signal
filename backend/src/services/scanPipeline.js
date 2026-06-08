@@ -11,6 +11,7 @@ const {
   searchRedditStructured,
   searchSubredditStructured,
   getActiveRedditMode,
+  sanitizeRedditMessage,
 } = require('./redditService');
 const { searchHNStructured } = require('./hnService');
 const {
@@ -274,7 +275,9 @@ function capScanLists(queries, subreddits) {
 
 function recordRedditError(stats, error) {
   stats.reddit_error_count += 1;
-  stats.last_reddit_error = error?.message || String(error || 'Reddit error');
+  stats.last_reddit_error = sanitizeRedditMessage(
+    error?.message || String(error || 'Reddit error')
+  );
   if (error?.code === 'REDDIT_BLOCKED' || error?.code === 'REDDIT_AUTH_FAILED') {
     stats.reddit_auth_error = true;
   }
@@ -415,7 +418,7 @@ function explainZeroLeads(stats) {
     return `Scan complete — no qualified leads found. ${stats.rejection_summary}`;
   }
   if (stats.reddit_auth_error) {
-    return 'Reddit blocked or auth failed. Check REDDIT_USER_AGENT or OAuth credentials.';
+    return 'Reddit blocked this server (network security). Check PROXY_LIST and Webshare proxy credentials on signal-worker-web.';
   }
   if (stats.collected_raw === 0) {
     if (stats.reddit_error_count > 0 || stats.hn_error_count > 0) {

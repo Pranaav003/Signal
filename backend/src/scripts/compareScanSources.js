@@ -4,10 +4,8 @@ const { generateQueries } = require('../services/keywordProcessor');
 const {
   searchRedditPublicStructured,
   searchSubredditPublicStructured,
-  searchRedditOAuthStructured,
-  searchSubredditOAuthStructured,
-  oauthCredentialsPresent,
   getActiveRedditMode,
+  proxyEnabled,
 } = require('../services/redditService');
 const { searchHNStructured } = require('../services/hnService');
 const { scoreResultDetailed, leadScoreThreshold } = require('../services/relevanceScorer');
@@ -94,7 +92,7 @@ async function main() {
   console.log('\n=== Scan source comparison ===\n');
   console.log('Domain:', generated.domain);
   console.log('Active worker REDDIT_MODE:', getActiveRedditMode());
-  console.log('OAuth credentials present:', oauthCredentialsPresent());
+  console.log('Proxy enabled:', proxyEnabled());
   console.log('\nGenerated queries (' + queries.length + '):');
   queries.forEach((q, i) => console.log(`  ${i + 1}. ${q}`));
   console.log('\nGenerated subreddits (' + subreddits.length + '):');
@@ -105,7 +103,6 @@ async function main() {
   let rawHn = 0;
   let hnStoryCount = 0;
   let hnCommentCount = 0;
-  let rawOauthGlobal = 0;
   let redditPostCount = 0;
   let redditCommentCount = 0;
   const collected = [];
@@ -119,11 +116,6 @@ async function main() {
       redditCommentCount += Number(pub.meta?.comment_count || 0);
     } else {
       console.warn(`[public global] "${q}":`, pub.error?.message);
-    }
-
-    if (oauthCredentialsPresent()) {
-      const oauth = await searchRedditOAuthStructured(q);
-      if (oauth.ok) rawOauthGlobal += oauth.items.length;
     }
 
     const hn = await searchHNStructured(q);
@@ -183,7 +175,6 @@ async function main() {
   console.log('\n--- Counts ---');
   console.log('raw_global_count (public JSON):', rawGlobal);
   console.log('raw_subreddit_count (public JSON):', rawSubreddit);
-  console.log('raw_oauth_global_count (if creds):', oauthCredentialsPresent() ? rawOauthGlobal : 'n/a');
   console.log('hn_count:', rawHn, `(stories: ${hnStoryCount}, comments: ${hnCommentCount})`);
   console.log('reddit_post_count:', redditPostCount);
   console.log('reddit_comment_count:', redditCommentCount);
@@ -194,12 +185,6 @@ async function main() {
   console.log('would_insert_count (has url+post_id, score>=floor):', wouldInsert.length);
   console.log('filtered_out_count:', stats.filtered_out_count);
   console.log('threshold:', threshold, '| score_floor:', scoreFloor);
-
-  if (oauthCredentialsPresent() && rawOauthGlobal < rawGlobal) {
-    console.log('\nNote: OAuth global returned FEWER than public JSON for these queries.');
-  } else if (oauthCredentialsPresent() && rawOauthGlobal > rawGlobal) {
-    console.log('\nNote: OAuth global returned MORE than public JSON for these queries.');
-  }
 
   if (rawHn === 0) {
     console.log('\nNote: HN returned 0 — ENABLE_HN_SEARCH or Algolia may be empty for these queries.');

@@ -459,24 +459,42 @@ router.get('/:id/scan-status', async (req, res) => {
     }
 
     let workerHint = null;
+    const isProduction = process.env.NODE_ENV === 'production';
+    const localWorkerStartHint =
+      'Start it with: cd backend && npm run worker (or npm run dev from the repo root).';
+    const prodWorkerStartHint =
+      'Check signal-worker-web on Render (GET /health). Free tier sleeps when idle — keep it awake with UptimeRobot every 5 minutes.';
+
     if (orphan_waiting) {
-      workerHint =
-        'Scan is queued but the job is not in the worker queue (orphan). Click Rescan on this monitor, or restart the backend worker.';
+      workerHint = isProduction
+        ? 'Scan is queued but the job is missing from the worker queue. Click Retry scan, or redeploy signal-worker-web on Render.'
+        : 'Scan is queued but the job is not in the worker queue (orphan). Click Rescan on this monitor, or restart the backend worker.';
     } else if (status === 'stuck' && !workerAlive) {
-      workerHint =
-        'Worker is not running. Start it with: cd backend && npm run worker (or npm run dev from the repo root).';
+      workerHint = isProduction ? prodWorkerStartHint : localWorkerStartHint;
     } else if (status === 'stuck') {
-      workerHint =
-        'Scan is queued but not progressing. Try Retry scan or check GET /api/debug/scan-queue.';
+      workerHint = isProduction
+        ? 'Scan is queued but not progressing. Try Retry scan or check signal-worker-web logs on Render.'
+        : 'Scan is queued but not progressing. Try Retry scan or check GET /api/debug/scan-queue.';
     } else if (!job && !keywordSet.last_scanned_at && progressPhase !== 'complete') {
-      workerHint =
-        'No worker job found. Start the scan worker: cd backend && npm run worker (or ./scripts/dev-all.sh).';
+      workerHint = isProduction ? prodWorkerStartHint : localWorkerStartHint;
     } else if (status === 'queued') {
       workerHint = workerAlive
         ? 'Scan is queued — worker is running and will pick this up soon.'
-        : 'Worker is not running. Start it with: cd backend && npm run worker';
+        : isProduction
+          ? prodWorkerStartHint
+          : localWorkerStartHint;
     } else if (jobState === 'active') {
       workerHint = 'Worker is running this scan.';
+    } else if (
+      status === 'failed' &&
+      (scanProgress.reddit_auth_error ||
+        /reddit blocked|network security|REDDIT_BLOCKED/i.test(
+          String(scanRun?.error_message || scanProgress.message || '')
+        ))
+    ) {
+      workerHint = isProduction
+        ? 'Reddit blocked requests from signal-worker-web. Check PROXY_LIST / PROXY_USERNAME / PROXY_PASSWORD on Render, or replace blocked Webshare IPs.'
+        : 'Reddit blocked this request. Set PROXY_LIST and proxy credentials in backend/.env, then restart the worker.';
     }
 
     const plannerSource =

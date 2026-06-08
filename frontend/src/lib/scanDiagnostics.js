@@ -1,3 +1,17 @@
+/** Strip HTML / noisy Reddit errors before showing in the UI. */
+export function sanitizeScanErrorMessage(raw) {
+  const text = String(raw || '').trim()
+  if (!text) return 'Scan failed. Check backend logs.'
+  if (
+    /blocked by network security/i.test(text) ||
+    /<!doctype html|<html|<body class=/i.test(text)
+  ) {
+    return 'Reddit blocked this server (network security). Check PROXY_LIST and proxy credentials on signal-worker-web.'
+  }
+  if (text.length > 320) return `${text.slice(0, 317)}...`
+  return text
+}
+
 /** Build a user-facing line when a scan finished with few or zero leads. */
 export function formatScanDiagnosticSummary(data) {
   const d = data?.diagnostics || data?.scan_progress || {}
@@ -65,7 +79,7 @@ export function formatZeroLeadsDiagnostic(data) {
   }
 
   if (d.reddit_auth_error) {
-    return 'Reddit blocked or auth failed. Set REDDIT_USER_AGENT or OAuth credentials in backend/.env.'
+    return 'Reddit blocked or proxy failed. Set PROXY_LIST and proxy credentials in backend/.env.'
   }
 
   const raw = Number(d.raw_candidates ?? d.collected_raw ?? 0)

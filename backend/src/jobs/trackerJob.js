@@ -63,6 +63,8 @@ async function startTrackerScheduler() {
     {
       repeat: { every: 2 * 3600 * 1000 },
       jobId: 'reply-tracker-refresh',
+      removeOnComplete: true,
+      removeOnFail: Number(process.env.REDIS_FAILED_JOBS_TO_KEEP) || 5,
     }
   );
   console.log('✓ Reply tracker scheduler: every 2 hours');

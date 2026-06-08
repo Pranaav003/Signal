@@ -16,7 +16,11 @@ const {
   MANUAL_SCAN_QUEUE_NAME,
 } = require('./scanJob');
 const { initTrackerWorker } = require('./trackerJob');
-const { validateRedditCredentials } = require('../services/redditService');
+const { validateRedditCredentials, sanitizeRedditMessage } = require('../services/redditService');
+const {
+  pruneStaleBullQueues,
+  formatCleanupSummary,
+} = require('../services/redisCleanup');
 const {
   REDIS_URL,
   redactRedisUrl,
@@ -57,12 +61,30 @@ async function verifyRedis() {
 async function startWorker() {
   await verifyRedis();
 
+  try {
+    const summary = await pruneStaleBullQueues();
+    const detail = formatCleanupSummary(summary);
+    if (/removed [1-9]|orphan repeatables=[1-9]/.test(detail)) {
+      console.log(`✓ Redis pruned stale Bull data — ${detail}`);
+    } else {
+      console.log('✓ Redis Bull queues checked (no stale jobs to prune)');
+    }
+  } catch (err) {
+    console.warn(
+      '[worker] Redis prune skipped:',
+      err && err.message ? err.message : err
+    );
+  }
+
   const redditCheck = await validateRedditCredentials();
   if (!redditCheck.ok) {
     console.error(
       '✗ Reddit public JSON API unreachable; scans may return 0 leads until fixed.'
     );
-    console.error('  ', redditCheck.error?.message || 'Unknown error');
+    console.error(
+      '  ',
+      sanitizeRedditMessage(redditCheck.error?.message || 'Unknown error')
+    );
   } else {
     console.log(
       `✓ Reddit public JSON API OK (sample results: ${redditCheck.sample_count ?? 0})`

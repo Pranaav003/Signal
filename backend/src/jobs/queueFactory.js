@@ -28,8 +28,20 @@ function createRedisClient() {
 }
 
 function createBullQueue(name) {
+  const guardInterval = Number(process.env.BULL_GUARD_INTERVAL_MS) || 30_000;
+  const drainDelay = Number(process.env.BULL_DRAIN_DELAY_SEC) || 30;
+  const failedToKeep = Number(process.env.REDIS_FAILED_JOBS_TO_KEEP) || 5;
   return new Bull(name, {
     createClient: () => createRedisClient(),
+    defaultJobOptions: {
+      removeOnComplete: true,
+      removeOnFail: failedToKeep,
+    },
+    settings: {
+      guardInterval,
+      drainDelay,
+      stalledInterval: 60_000,
+    },
   });
 }
 
