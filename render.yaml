@@ -1,10 +1,8 @@
 # Render Blueprint — Option A: free web services + Neon Postgres + Upstash Redis
 # https://render.com/docs/blueprint-spec
 #
-# Bull/Redis/worker architecture preserved. Worker runs as signal-worker-web (type: web).
-# Neon/Upstash values below are rotated placeholder credentials showing exact format.
-# Replace with fresh Neon/Upstash values before a real deployment.
-# OPENAI_API_KEY remains sync:false — set in Render dashboard.
+# NEVER commit real DATABASE_URL, REDIS_URL, PROXY_PASSWORD, or API keys here.
+# Set secrets in the Render dashboard (Environment) or use sync: false below.
 # Ping backend /health and worker-web /health with UptimeRobot (free tier sleeps when idle).
 
 services:
@@ -25,23 +23,23 @@ services:
       - key: FRONTEND_URL
         value: https://signal.pranaaviyer.com
       - key: DATABASE_URL
-        value: postgresql://neondb_owner:npg_uZUv5znhX3yp@ep-winter-night-apz1odea-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require
+        sync: false
       - key: REDIS_URL
-        value: rediss://default:gQAAAAAAAjSaAAIgcDE4YjdkMWUzNzU0MzQ0YTk4OTgxMDQyMzZhOTU1NjI5MQ@blessed-mantis-144538.upstash.io:6379
+        sync: false
       - key: UPSTASH_REDIS_REST_URL
-        value: https://blessed-mantis-144538.upstash.io
+        sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
-        value: gQAAAAAAAjSaAAIgcDE4YjdkMWUzNzU0MzQ0YTk4OTgxMDQyMzZhOTU1NjI5MQ
+        sync: false
       - key: REDDIT_USER_AGENT
         value: Signal/1.0 (by /u/Pranaav003)
       - key: REDDIT_REQUEST_DELAY_MS
         value: "3000"
-      - key: PROXY_PASSWORD
-        value: ux6ov8h3qm1o
       - key: PROXY_LIST
         value: p.webshare.io:80
       - key: PROXY_USERNAMES
-        value: qcceojoh-gb-1,qcceojoh-ca-2,qcceojoh-de-3,qcceojoh-fr-4,qcceojoh-au-5,qcceojoh-nl-6,qcceojoh-it-7,qcceojoh-es-8,qcceojoh-be-9,qcceojoh-at-10
+        sync: false
+      - key: PROXY_PASSWORD
+        sync: false
       - key: USE_MOCK_REDDIT
         value: "false"
       - key: OPENAI_API_KEY
@@ -78,23 +76,23 @@ services:
       - key: NODE_ENV
         value: production
       - key: DATABASE_URL
-        value: postgresql://neondb_owner:npg_uZUv5znhX3yp@ep-winter-night-apz1odea-pooler.c-7.us-east-1.aws.neon.tech/neondb?sslmode=require
+        sync: false
       - key: REDIS_URL
-        value: rediss://default:gQAAAAAAAjSaAAIgcDE4YjdkMWUzNzU0MzQ0YTk4OTgxMDQyMzZhOTU1NjI5MQ@blessed-mantis-144538.upstash.io:6379
+        sync: false
       - key: UPSTASH_REDIS_REST_URL
-        value: https://blessed-mantis-144538.upstash.io
+        sync: false
       - key: UPSTASH_REDIS_REST_TOKEN
-        value: gQAAAAAAAjSaAAIgcDE4YjdkMWUzNzU0MzQ0YTk4OTgxMDQyMzZhOTU1NjI5MQ
+        sync: false
       - key: REDDIT_USER_AGENT
         value: Signal/1.0 (by /u/Pranaav003)
       - key: REDDIT_REQUEST_DELAY_MS
         value: "3000"
-      - key: PROXY_PASSWORD
-        value: ux6ov8h3qm1o
       - key: PROXY_LIST
         value: p.webshare.io:80
       - key: PROXY_USERNAMES
-        value: qcceojoh-gb-1,qcceojoh-ca-2,qcceojoh-de-3,qcceojoh-fr-4,qcceojoh-au-5,qcceojoh-nl-6,qcceojoh-it-7,qcceojoh-es-8,qcceojoh-be-9,qcceojoh-at-10
+        sync: false
+      - key: PROXY_PASSWORD
+        sync: false
       - key: USE_MOCK_REDDIT
         value: "false"
       - key: OPENAI_API_KEY

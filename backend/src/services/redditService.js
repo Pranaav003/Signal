@@ -16,19 +16,6 @@ const MIN_INTERVAL_MS =
     ? Math.max(configuredDelay, 1500)
     : 2000;
 
-const DEFAULT_PROXY_USERNAMES = [
-  'qcceojoh-gb-1',
-  'qcceojoh-ca-2',
-  'qcceojoh-de-3',
-  'qcceojoh-fr-4',
-  'qcceojoh-au-5',
-  'qcceojoh-nl-6',
-  'qcceojoh-it-7',
-  'qcceojoh-es-8',
-  'qcceojoh-be-9',
-  'qcceojoh-at-10',
-].join(',');
-
 const PROXY_LIST = (
   process.env.PROXY_LIST ||
   (process.env.PROXY_HOST
@@ -39,16 +26,12 @@ const PROXY_LIST = (
   .map((entry) => entry.trim())
   .filter(Boolean);
 
-const PROXY_USERNAMES = (
-  process.env.PROXY_USERNAMES ||
-  process.env.PROXY_USERNAME ||
-  DEFAULT_PROXY_USERNAMES
-)
+const PROXY_USERNAMES = (process.env.PROXY_USERNAMES || process.env.PROXY_USERNAME || '')
   .split(',')
   .map((entry) => entry.trim())
   .filter(Boolean);
 
-const PROXY_PASSWORD = process.env.PROXY_PASSWORD || 'ux6ov8h3qm1o';
+const PROXY_PASSWORD = process.env.PROXY_PASSWORD || '';
 
 function pickProxyUsername(excludeUsername) {
   const pool = excludeUsername
