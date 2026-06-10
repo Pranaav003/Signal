@@ -357,7 +357,18 @@ async function qualifyCandidates(candidates, keywordSetOrBrief = {}, stats = {})
     stats.classifier_response_parse_error = null;
   }
 
-  if (!useAi || !candidates.length) {
+  if (!candidates.length) {
+    if (stats) {
+      stats.classifier_source = useAi ? 'ai' : 'fallback';
+      stats.classifier_model = null;
+      stats.classifier_error = null;
+      stats.classifier_attempted = false;
+      stats.sent_to_ai_qualification_count = 0;
+    }
+    return withFallback;
+  }
+
+  if (!useAi) {
     const reason = classifierUnavailableReason();
     if (stats) {
       stats.classifier_source = 'fallback';

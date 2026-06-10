@@ -422,7 +422,8 @@ async function processScanJob(job) {
 
       if (
         process.env.REQUIRE_AI_CLASSIFIER === 'true' &&
-        stats.classifier_source === 'fallback'
+        stats.classifier_source === 'fallback' &&
+        stats.classifier_error
       ) {
         const errMsg =
           stats.classifier_error ||

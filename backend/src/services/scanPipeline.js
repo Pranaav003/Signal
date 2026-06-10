@@ -389,9 +389,13 @@ function buildRejectionSummary(stats, keywordSet) {
     parts.push('Scan targeted the demand/buyer side of the market.');
   }
 
-  if (stats.classifier_source === 'fallback') {
+  if (stats.qualification_skipped_reason) {
+    parts.push(stats.qualification_skipped_reason);
+  }
+
+  if (stats.classifier_source === 'fallback' && stats.classifier_error) {
     parts.push(
-      `AI classifier unavailable (${stats.classifier_error || 'fallback used'}); conservative rules rejected candidates.`
+      `AI classifier unavailable (${stats.classifier_error}); conservative rules rejected candidates.`
     );
   } else if (stats.classifier_source === 'ai' && stats.rejected_semantic_count > 0) {
     parts.push(
@@ -534,6 +538,10 @@ async function scoreAndQualify(collected, pool, keywordSet, stats) {
   const topForQualification = scoredInitial
     .filter((r) => r.initial_score >= cheapFloor)
     .slice(0, maxQual);
+
+  if (!topForQualification.length && scoredInitial.length > 0) {
+    stats.qualification_skipped_reason = `No candidates met the initial score floor (${cheapFloor}) for AI review.`;
+  }
 
   const qualifiedBatch = await qualifyCandidates(topForQualification, keywordSet, stats);
   const qualMap = new Map(qualifiedBatch.map((r) => [r.post_id, r]));
