@@ -1,10 +1,18 @@
 require('../config/loadEnv');
 
+const { hasClassifierConfigConflict } = require('../services/leadQualifier');
+
 if (process.env.OPENAI_API_KEY) {
   console.log('[worker] OPENAI_API_KEY loaded — AI planner/classifier enabled');
 } else {
   console.warn(
     '[worker] OPENAI_API_KEY missing — scans will use fallback qualification (set backend/.env)'
+  );
+}
+
+if (hasClassifierConfigConflict()) {
+  console.error(
+    '[worker] REQUIRE_AI_CLASSIFIER=true conflicts with SKIP_AI_LEAD_CLASSIFIER=true — scans will fail until SKIP_AI_LEAD_CLASSIFIER is removed from this service.'
   );
 }
 

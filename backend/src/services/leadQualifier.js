@@ -32,6 +32,26 @@ function requireAiClassifier() {
   return process.env.REQUIRE_AI_CLASSIFIER === 'true';
 }
 
+function classifierUnavailableReason() {
+  if (process.env.SKIP_AI_LEAD_CLASSIFIER === 'true') {
+    if (requireAiClassifier()) {
+      return (
+        'AI lead classification is disabled (SKIP_AI_LEAD_CLASSIFIER) but scans require it ' +
+        '(REQUIRE_AI_CLASSIFIER). On Render, open signal-worker-web → Environment and delete SKIP_AI_LEAD_CLASSIFIER.'
+      );
+    }
+    return 'AI lead classification is disabled (SKIP_AI_LEAD_CLASSIFIER=true).';
+  }
+  if (!process.env.OPENAI_API_KEY) {
+    return 'OPENAI_API_KEY is not set on the worker service.';
+  }
+  return 'AI classifier is unavailable.';
+}
+
+function hasClassifierConfigConflict() {
+  return requireAiClassifier() && process.env.SKIP_AI_LEAD_CLASSIFIER === 'true';
+}
+
 function getBrief(keywordSetOrBrief = {}) {
   if (keywordSetOrBrief.search_brief && typeof keywordSetOrBrief.search_brief === 'object') {
     return keywordSetOrBrief.search_brief;
@@ -338,9 +358,7 @@ async function qualifyCandidates(candidates, keywordSetOrBrief = {}, stats = {})
   }
 
   if (!useAi || !candidates.length) {
-    const reason = !process.env.OPENAI_API_KEY
-      ? 'OPENAI_API_KEY missing'
-      : 'SKIP_AI_LEAD_CLASSIFIER=true';
+    const reason = classifierUnavailableReason();
     if (stats) {
       stats.classifier_source = 'fallback';
       stats.classifier_model = null;
@@ -470,4 +488,6 @@ module.exports = {
   shouldSkipByNegativeFilter,
   getBrief,
   requireAiClassifier,
+  classifierUnavailableReason,
+  hasClassifierConfigConflict,
 };

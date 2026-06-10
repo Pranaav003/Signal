@@ -3,6 +3,24 @@ export function sanitizeScanErrorMessage(raw) {
   const text = String(raw || '').trim()
   if (!text) return 'Scan failed. Check backend logs.'
   if (
+    /SKIP_AI_LEAD_CLASSIFIER/i.test(text) &&
+    /REQUIRE_AI_CLASSIFIER/i.test(text)
+  ) {
+    return (
+      'AI classification is required but disabled on the worker. On Render, open signal-worker-web → ' +
+      'Environment and delete SKIP_AI_LEAD_CLASSIFIER, then redeploy.'
+    )
+  }
+  if (/SKIP_AI_LEAD_CLASSIFIER/i.test(text)) {
+    return (
+      'AI lead classification is turned off (SKIP_AI_LEAD_CLASSIFIER). Remove that variable from ' +
+      'signal-worker-web on Render, or set REQUIRE_AI_CLASSIFIER=false on both services.'
+    )
+  }
+  if (/OPENAI_API_KEY/i.test(text) && /missing|not set/i.test(text)) {
+    return 'OPENAI_API_KEY is missing on signal-worker-web. Add it in Render → Environment and redeploy.'
+  }
+  if (
     /blocked by network security/i.test(text) ||
     /<!doctype html|<html|<body class=/i.test(text)
   ) {
