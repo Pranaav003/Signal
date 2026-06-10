@@ -1208,7 +1208,10 @@ export default function ScanProgress({
                         0
                     )
                     const failMsgManual = sanitizeScanErrorMessage(
-                      data.worker_hint ||
+                      data?.diagnostics?.classifier_error ||
+                        data?.scan_progress?.classifier_error ||
+                        data?.classifier_error ||
+                        data.worker_hint ||
                         data.scan_progress?.message ||
                         'Scan failed.'
                     )
