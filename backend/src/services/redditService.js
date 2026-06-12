@@ -26,10 +26,23 @@ const PROXY_LIST = (
   .map((entry) => entry.trim())
   .filter(Boolean);
 
-const PROXY_USERNAMES = (process.env.PROXY_USERNAMES || process.env.PROXY_USERNAME || '')
-  .split(',')
-  .map((entry) => entry.trim())
-  .filter(Boolean);
+function buildProxyUsernamePool() {
+  const fromList = (process.env.PROXY_USERNAMES || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const singles = (process.env.PROXY_USERNAME || '')
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  const pool = [];
+  for (const name of [...singles, ...fromList]) {
+    if (name && !pool.includes(name)) pool.push(name);
+  }
+  return pool;
+}
+
+const PROXY_USERNAMES = buildProxyUsernamePool();
 
 const PROXY_PASSWORD = process.env.PROXY_PASSWORD || '';
 
@@ -345,77 +358,148 @@ function searchLimit() {
   return Number(process.env.REDDIT_SEARCH_LIMIT) > 0 ? Number(process.env.REDDIT_SEARCH_LIMIT) : 25;
 }
 
-async function searchRedditPublicStructured(query) {
-  try {
-    const limit = searchLimit();
-    const linkListing = normalizeListing(
-      await jsonGet('https://www.reddit.com/search.json', {
-        q: query,
-        sort: 'new',
-        limit,
-        type: 'link',
-      })
-    );
-    const commentListing = normalizeListing(
-      await jsonGet('https://www.reddit.com/search.json', {
-        q: query,
-        sort: 'new',
-        limit,
-        type: 'comment',
-      })
-    );
-
-    const items = [...linkListing.posts, ...commentListing.posts, ...linkListing.comments, ...commentListing.comments];
-
-    return {
-      ok: true,
-      items,
-      meta: {
-        mode: 'public_json',
-        post_count: linkListing.posts.length + commentListing.posts.length,
-        comment_count: linkListing.comments.length + commentListing.comments.length,
-      },
-    };
-  } catch (err) {
-    const error = err.redditError || parseRedditError(err);
-    if (error.code === 'REDDIT_BLOCKED' || error.code === 'REDDIT_AUTH_FAILED') {
-      throw Object.assign(new Error(error.message), { redditError: error });
-    }
-    return { ok: false, items: [], error, meta: { mode: 'public_json' } };
+function maxEmptyProxyRetries() {
+  if (process.env.REDDIT_EMPTY_RETRIES === '0') return 0;
+  if (Number(process.env.REDDIT_EMPTY_RETRIES) > 0) {
+    return Number(process.env.REDDIT_EMPTY_RETRIES);
   }
+  return Math.min(Math.max(PROXY_USERNAMES.length, 1), 5);
+}
+
+async function fetchRedditSearchListings(url, params, proxyUsername) {
+  const linkListing = normalizeListing(
+    await jsonGet(url, { ...params, type: 'link' }, 1, null, proxyUsername)
+  );
+  const commentListing = normalizeListing(
+    await jsonGet(url, { ...params, type: 'comment' }, 1, null, proxyUsername)
+  );
+  const items = [
+    ...linkListing.posts,
+    ...commentListing.posts,
+    ...linkListing.comments,
+    ...commentListing.comments,
+  ];
+  return {
+    items,
+    meta: {
+      mode: 'public_json',
+      post_count: linkListing.posts.length + commentListing.posts.length,
+      comment_count: linkListing.comments.length + commentListing.comments.length,
+      proxy_username: proxyUsername || null,
+    },
+  };
+}
+
+async function searchRedditPublicStructured(query) {
+  const maxEmptyRetries = maxEmptyProxyRetries();
+  const triedUsers = new Set();
+  let lastError = null;
+
+  for (let emptyAttempt = 1; emptyAttempt <= Math.max(1, maxEmptyRetries + 1); emptyAttempt += 1) {
+    let proxyUsername = pickProxyUsername();
+    while (triedUsers.has(proxyUsername) && triedUsers.size < PROXY_USERNAMES.length) {
+      proxyUsername = pickProxyUsername(proxyUsername);
+    }
+    if (proxyUsername) triedUsers.add(proxyUsername);
+
+    try {
+      const { items, meta } = await fetchRedditSearchListings(
+        'https://www.reddit.com/search.json',
+        { q: query, sort: 'new', limit: searchLimit() },
+        proxyUsername
+      );
+
+      const shouldRetryEmpty =
+        items.length === 0 &&
+        proxyEnabled() &&
+        emptyAttempt <= maxEmptyRetries &&
+        PROXY_USERNAMES.length > 1;
+
+      if (shouldRetryEmpty) {
+        console.warn(
+          `[redditService] empty global search for "${query}" via ${proxyUsername || 'direct'} — retry ${emptyAttempt}/${maxEmptyRetries}`
+        );
+        await sleep(400);
+        continue;
+      }
+
+      if (items.length === 0 && proxyEnabled()) {
+        console.warn(
+          `[redditService] empty global search for "${query}" after ${triedUsers.size} proxy attempt(s)`
+        );
+      }
+
+      return { ok: true, items, meta: { ...meta, empty_attempts: emptyAttempt } };
+    } catch (err) {
+      const error = err.redditError || parseRedditError(err);
+      lastError = error;
+      if (error.code === 'REDDIT_BLOCKED' || error.code === 'REDDIT_AUTH_FAILED') {
+        throw Object.assign(new Error(error.message), { redditError: error });
+      }
+      return { ok: false, items: [], error, meta: { mode: 'public_json' } };
+    }
+  }
+
+  return {
+    ok: false,
+    items: [],
+    error: lastError || { message: 'Reddit search returned no results' },
+    meta: { mode: 'public_json' },
+  };
 }
 
 async function searchSubredditPublicStructured(subreddit, query) {
-  try {
-    const sub = String(subreddit).replace(/^r\//, '');
-    const base = `https://www.reddit.com/r/${encodeURIComponent(sub)}/search.json`;
-    const limit = searchLimit();
+  const sub = String(subreddit).replace(/^r\//, '');
+  const base = `https://www.reddit.com/r/${encodeURIComponent(sub)}/search.json`;
+  const maxEmptyRetries = maxEmptyProxyRetries();
+  const triedUsers = new Set();
+  let lastError = null;
 
-    const linkListing = normalizeListing(
-      await jsonGet(base, { q: query, sort: 'new', limit, restrict_sr: 'on', type: 'link' })
-    );
-    const commentListing = normalizeListing(
-      await jsonGet(base, { q: query, sort: 'new', limit, restrict_sr: 'on', type: 'comment' })
-    );
-
-    const items = [...linkListing.posts, ...commentListing.posts, ...linkListing.comments, ...commentListing.comments];
-
-    return {
-      ok: true,
-      items,
-      meta: {
-        mode: 'public_json',
-        post_count: linkListing.posts.length + commentListing.posts.length,
-        comment_count: linkListing.comments.length + commentListing.comments.length,
-      },
-    };
-  } catch (err) {
-    const error = err.redditError || parseRedditError(err);
-    if (error.code === 'REDDIT_BLOCKED' || error.code === 'REDDIT_AUTH_FAILED') {
-      throw Object.assign(new Error(error.message), { redditError: error });
+  for (let emptyAttempt = 1; emptyAttempt <= Math.max(1, maxEmptyRetries + 1); emptyAttempt += 1) {
+    let proxyUsername = pickProxyUsername();
+    while (triedUsers.has(proxyUsername) && triedUsers.size < PROXY_USERNAMES.length) {
+      proxyUsername = pickProxyUsername(proxyUsername);
     }
-    return { ok: false, items: [], error, meta: { mode: 'public_json' } };
+    if (proxyUsername) triedUsers.add(proxyUsername);
+
+    try {
+      const { items, meta } = await fetchRedditSearchListings(
+        base,
+        { q: query, sort: 'new', limit: searchLimit(), restrict_sr: 'on' },
+        proxyUsername
+      );
+
+      const shouldRetryEmpty =
+        items.length === 0 &&
+        proxyEnabled() &&
+        emptyAttempt <= maxEmptyRetries &&
+        PROXY_USERNAMES.length > 1;
+
+      if (shouldRetryEmpty) {
+        console.warn(
+          `[redditService] empty r/${sub} search for "${query}" via ${proxyUsername || 'direct'} — retry ${emptyAttempt}/${maxEmptyRetries}`
+        );
+        await sleep(400);
+        continue;
+      }
+
+      return { ok: true, items, meta: { ...meta, subreddit: sub, empty_attempts: emptyAttempt } };
+    } catch (err) {
+      const error = err.redditError || parseRedditError(err);
+      lastError = error;
+      if (error.code === 'REDDIT_BLOCKED' || error.code === 'REDDIT_AUTH_FAILED') {
+        throw Object.assign(new Error(error.message), { redditError: error });
+      }
+      return { ok: false, items: [], error, meta: { mode: 'public_json', subreddit: sub } };
+    }
   }
+
+  return {
+    ok: false,
+    items: [],
+    error: lastError || { message: 'Reddit subreddit search returned no results' },
+    meta: { mode: 'public_json', subreddit: sub },
+  };
 }
 
 async function searchRedditStructured(query) {

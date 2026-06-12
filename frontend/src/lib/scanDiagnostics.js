@@ -111,7 +111,13 @@ export function formatZeroLeadsDiagnostic(data) {
     if (Number(d.reddit_error_count || 0) > 0 || Number(d.hn_error_count || 0) > 0) {
       return `0 raw results (${d.reddit_error_count || 0} Reddit errors, ${d.hn_error_count || 0} HN errors). ${d.last_reddit_error || d.last_hn_error || ''}`
     }
-    return '0 raw results. Run: cd backend && npm run compare:scan -- --description "..."'
+    if (Number(d.reddit_empty_response_count || 0) > 0) {
+      return (
+        'Reddit returned empty through your proxies — no posts collected. ' +
+        'On Render, confirm PROXY_PASSWORD and keep PROXY_USERNAME=qcceojoh-rotate set on signal-worker-web.'
+      )
+    }
+    return '0 raw results — Reddit blocked or proxies returned blank. Check signal-worker-web logs and proxy credentials on Render.'
   }
   if (deduped === 0) {
     return 'Results returned but none had valid post IDs after dedupe.'

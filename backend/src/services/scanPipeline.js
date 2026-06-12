@@ -123,6 +123,9 @@ function statsToDiagnostics(stats, options = {}) {
     saved_examples: stats.saved_examples || [],
     leads_found: stats.inserted_count || 0,
     collected_raw: stats.collected_raw || 0,
+    reddit_error_count: stats.reddit_error_count || 0,
+    reddit_empty_response_count: stats.reddit_empty_response_count || 0,
+    last_reddit_error: stats.last_reddit_error || null,
     },
     options
   );
@@ -151,6 +154,7 @@ function emptyStats(scanRunId = null) {
     skipped_missing_url_count: 0,
     skipped_missing_post_id_count: 0,
     reddit_error_count: 0,
+    reddit_empty_response_count: 0,
     hn_error_count: 0,
     reddit_auth_error: false,
     last_reddit_error: null,
@@ -294,6 +298,12 @@ async function fetchGlobal(query, stats) {
   if (result.ok) {
     stats.raw_global_count += result.items.length;
     applyRedditMeta(stats, result.meta);
+    if (result.items.length === 0) {
+      stats.reddit_empty_response_count = (stats.reddit_empty_response_count || 0) + 1;
+      stats.last_reddit_error =
+        stats.last_reddit_error ||
+        'Reddit search returned 0 posts (proxy may be returning blank results).';
+    }
     return result.items;
   }
   recordRedditError(stats, result.error);
@@ -428,7 +438,13 @@ function explainZeroLeads(stats) {
     if (stats.reddit_error_count > 0 || stats.hn_error_count > 0) {
       return `0 raw results (${stats.reddit_error_count} Reddit errors, ${stats.hn_error_count} HN errors). ${stats.last_reddit_error || stats.last_hn_error || ''}`;
     }
-    return '0 raw results from Reddit and HN. Check worker logs and run npm run compare:scan.';
+    if ((stats.reddit_empty_response_count || 0) > 0) {
+      return (
+        'Reddit searches returned empty through your Webshare proxies. ' +
+        'Keep PROXY_USERNAME=qcceojoh-rotate on signal-worker-web (it is tried first), verify PROXY_PASSWORD, or rotate credentials in Webshare.'
+      );
+    }
+    return '0 raw results from Reddit and HN. Reddit blocks direct requests — check signal-worker-web proxy env vars and logs.';
   }
   if (stats.deduped_count === 0) {
     return 'Results returned but none had valid post_id after dedupe.';
