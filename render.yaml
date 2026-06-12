@@ -104,7 +104,7 @@ services:
       - key: REQUIRE_AI_CLASSIFIER
         value: "true"
       - key: REDDIT_STARTUP_PROBE_MS
-        value: "20000"
+        value: "45000"
       - key: SCAN_INCREMENTAL_PERSIST
         value: "false"
       - key: SCAN_MAX_LEADS_PER_RUN

@@ -84,7 +84,7 @@ async function probeRedditAtStartup() {
     return;
   }
 
-  const probeMs = Number(process.env.REDDIT_STARTUP_PROBE_MS) || 20_000;
+  const probeMs = Number(process.env.REDDIT_STARTUP_PROBE_MS) || 45_000;
   try {
     const redditCheck = await withTimeout(
       validateRedditCredentials(),
@@ -92,13 +92,18 @@ async function probeRedditAtStartup() {
       'Reddit startup probe'
     );
     if (!redditCheck.ok) {
+      const detail =
+        redditCheck.error?.message ||
+        (redditCheck.sample_count === 0
+          ? 'Reddit returned 0 sample posts through proxy'
+          : 'Reddit probe failed');
       console.warn(
         '⚠ Reddit startup probe failed; scans may return 0 leads until proxies work.'
       );
-      console.warn(
-        '  ',
-        sanitizeRedditMessage(redditCheck.error?.message || 'Unknown error')
-      );
+      console.warn('  ', sanitizeRedditMessage(detail));
+      if (redditCheck.meta?.proxy_username) {
+        console.warn(`  Last proxy username tried: ${redditCheck.meta.proxy_username}`);
+      }
       return;
     }
     console.log(

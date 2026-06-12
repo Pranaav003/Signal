@@ -514,14 +514,37 @@ async function validateRedditCredentials() {
   const mode = getActiveRedditMode();
   try {
     const result = await searchRedditPublicStructured('small business software');
+    const sampleCount = result.items?.length || 0;
+    const blocked =
+      result.error?.code === 'REDDIT_BLOCKED' || result.error?.code === 'REDDIT_AUTH_FAILED';
+    const ok = Boolean(result.ok && sampleCount > 0 && !blocked);
+    let error = result.error || null;
+    if (!ok && !error) {
+      if (sampleCount === 0) {
+        error = {
+          code: 'REDDIT_EMPTY',
+          message:
+            'Reddit search returned 0 results through the configured proxy. Check PROXY_PASSWORD and Webshare credentials on signal-worker-web.',
+        };
+      } else {
+        error = { message: 'Reddit probe did not return usable results.' };
+      }
+    }
     return {
-      ok: result.ok,
+      ok,
       mode,
-      sample_count: result.items?.length || 0,
+      sample_count: sampleCount,
       meta: result.meta,
+      error,
     };
   } catch (err) {
-    return { ok: false, mode, error: err.redditError || { message: err.message } };
+    const redditError = err.redditError || parseRedditError(err);
+    return {
+      ok: false,
+      mode,
+      sample_count: 0,
+      error: redditError,
+    };
   }
 }
 
