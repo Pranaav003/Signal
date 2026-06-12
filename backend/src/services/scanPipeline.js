@@ -436,7 +436,13 @@ function explainZeroLeads(stats) {
   }
   if (stats.collected_raw === 0) {
     if (stats.reddit_error_count > 0 || stats.hn_error_count > 0) {
-      return `0 raw results (${stats.reddit_error_count} Reddit errors, ${stats.hn_error_count} HN errors). ${stats.last_reddit_error || stats.last_hn_error || ''}`;
+      const detail = stats.last_reddit_error || stats.last_hn_error || '';
+      if (/bandwidth limit reached|upgrade to continue using the proxy/i.test(detail)) {
+        return (
+          'Webshare proxy bandwidth is used up (all Reddit requests failed). Upgrade or add bandwidth at webshare.io, then retry the scan.'
+        );
+      }
+      return `0 raw results (${stats.reddit_error_count} Reddit errors, ${stats.hn_error_count} HN errors). ${detail}`;
     }
     if ((stats.reddit_empty_response_count || 0) > 0) {
       return (

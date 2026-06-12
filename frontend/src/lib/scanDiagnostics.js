@@ -26,6 +26,12 @@ export function sanitizeScanErrorMessage(raw) {
   ) {
     return 'Reddit blocked this server (network security). Check PROXY_LIST and proxy credentials on signal-worker-web.'
   }
+  if (/bandwidth limit reached|upgrade to continue using the proxy/i.test(text)) {
+    return (
+      'Webshare proxy bandwidth is used up. Open webshare.io → Dashboard → upgrade your plan or add bandwidth, ' +
+      'then retry the scan (no Render changes needed unless you rotate PROXY_PASSWORD).'
+    )
+  }
   if (text.length > 320) return `${text.slice(0, 317)}...`
   return text
 }

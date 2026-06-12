@@ -129,6 +129,10 @@ function sanitizeRedditMessage(raw) {
     return 'Reddit blocked this request (network security). Try another proxy in PROXY_LIST or set PROXY_ENABLED=false to debug without a proxy.';
   }
 
+  if (/bandwidth limit reached|upgrade to continue using the proxy/i.test(text)) {
+    return 'Webshare proxy bandwidth limit reached. Upgrade your Webshare plan or add bandwidth at webshare.io, then retry the scan.';
+  }
+
   if (text.length > 280) return `${text.slice(0, 277)}...`;
   return text;
 }
