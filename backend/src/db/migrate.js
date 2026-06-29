@@ -97,6 +97,12 @@ async function main() {
     );
     await pool.query(migration005);
 
+    const migration006 = fs.readFileSync(
+      path.join(__dirname, 'migrations/006_scheduler_next_scan_at.sql'),
+      'utf8'
+    );
+    await pool.query(migration006);
+
     console.log('✓ Migration complete');
     await pool.end();
     process.exit(0);
