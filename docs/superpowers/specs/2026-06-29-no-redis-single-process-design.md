@@ -346,6 +346,8 @@ frontend/.env.production
 backend/.env.fly.example
 ```
 
+**Relationship between `scanRunner.js` and `scanJob.js`:** `scanRunner.js` is the new orchestration module — it owns `runScanInBackground()`, the `activeScans` concurrency guard, the timeout wrapper, and the memory guard. It imports `processScanJob()` from `scanJob.js`. `scanJob.js` retains the core scan processing logic (preparing the keyword set, running the pipeline, updating progress) but strips all Bull queue mechanics. The split is: `scanRunner.js` = scheduling infrastructure, `scanJob.js` = scan business logic.
+
 ### Stray code cleanup
 
 - Remove `.gitkeep` files from directories that now have actual files
