@@ -17,7 +17,11 @@ const SCAN_TIMEOUT_MS =
 const HEAP_LIMIT_MB = 200;
 
 const activeScans = new Set();
-let schedulerStopped = false;
+let _schedulerStopped = false;
+
+function isSchedulerStopped() {
+  return _schedulerStopped;
+}
 
 function memoryUsageOk() {
   const used = process.memoryUsage();
@@ -48,7 +52,7 @@ async function finishScanFailure(keywordSetId, message) {
  * Does not block the caller — the promise is intentionally not awaited by the caller.
  */
 async function runScanInBackground(keywordSetId, userId) {
-  if (schedulerStopped) {
+  if (_schedulerStopped) {
     console.warn(`[scanRunner] Skipping scan for ${keywordSetId} — scheduler stopped`);
     return;
   }
@@ -145,7 +149,7 @@ async function recoverOrphanedScans() {
 function startGracefulShutdownHandlers() {
   async function gracefulShutdown(signal) {
     console.log(`[shutdown] ${signal} received`);
-    schedulerStopped = true;
+    _schedulerStopped = true;
 
     const deadline = Date.now() + 30_000;
     while (activeScans.size > 0 && Date.now() < deadline) {
@@ -170,7 +174,7 @@ module.exports = {
   activeScans,
   MAX_CONCURRENT_SCANS,
   SCAN_TIMEOUT_MS,
-  schedulerStopped,
+  isSchedulerStopped,
   memoryUsageOk,
   runScanInBackground,
   recoverOrphanedScans,
