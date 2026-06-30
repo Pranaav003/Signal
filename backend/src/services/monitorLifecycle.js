@@ -1,40 +1,15 @@
+/**
+ * Monitor lifecycle — soft-delete monitors and hide associated leads.
+ * Bull job cancellation removed; scan runs are cancelled in Postgres.
+ */
 const pool = require('../db/connection');
-const {
-  manualScanQueue,
-  scanQueue,
-  manualScanJobId,
-} = require('../jobs/scanJob');
 
-async function cancelJobsForKeywordSet(keywordSetId) {
-  const jobId = manualScanJobId(keywordSetId);
-  let removed = 0;
-
-  for (const queue of [manualScanQueue, scanQueue]) {
-    try {
-      const job = await queue.getJob(jobId);
-      if (job) {
-        await job.remove();
-        removed += 1;
-      }
-    } catch (_e) {
-      /* ignore */
-    }
-  }
-
-  try {
-    const repeatable = await scanQueue.getRepeatableJobs();
-    const repeatId = `scan-${keywordSetId}`;
-    for (const rj of repeatable) {
-      if (rj.id === repeatId) {
-        await scanQueue.removeRepeatableByKey(rj.key);
-        removed += 1;
-      }
-    }
-  } catch (_e) {
-    /* ignore */
-  }
-
-  return removed;
+/**
+ * No-op: previously cancelled Bull jobs. Kept for API compatibility.
+ * Returns 0 because there are no queue jobs to cancel.
+ */
+async function cancelJobsForKeywordSet(_keywordSetId) {
+  return 0;
 }
 
 /**
@@ -94,14 +69,12 @@ async function deleteMonitorForUser(keywordSetId, userId) {
 
     await client.query('COMMIT');
 
-    const jobsRemoved = await cancelJobsForKeywordSet(keywordSetId);
-
     return {
       ok: true,
       deleted_monitor_id: keywordSetId,
       hidden_leads_count: leadsResult.rowCount || 0,
       cancelled_scan_runs_count: runsResult.rowCount || 0,
-      jobs_removed: jobsRemoved,
+      jobs_removed: 0,
     };
   } catch (err) {
     await client.query('ROLLBACK');

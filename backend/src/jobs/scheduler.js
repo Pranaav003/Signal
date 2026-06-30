@@ -1,36 +1,67 @@
+/**
+ * Postgres-based scheduler — replaces Bull repeatable jobs.
+ * Polls keyword_sets.next_scan_at every 30 seconds and fires in-process scans.
+ */
 const pool = require('../db/connection');
-const { scanQueue } = require('./scanJob');
+const { runScanInBackground, isSchedulerStopped, memoryUsageOk } = require('./scanRunner');
 
-async function startScheduler() {
-  const result = await pool.query(
-    `SELECT id, user_id, scan_interval_hours FROM keyword_sets WHERE active = true`
-  );
+const SCHEDULER_POLL_INTERVAL_MS =
+  Number(process.env.SCHEDULER_POLL_INTERVAL_MS) > 0
+    ? Number(process.env.SCHEDULER_POLL_INTERVAL_MS)
+    : 30_000;
 
-  for (const ks of result.rows) {
-    if (!ks.user_id) {
-      console.warn(`[scheduler] Skipping ${ks.id} — no user_id`);
-      continue;
-    }
+let schedulerTimer = null;
 
-    const hours = Number(ks.scan_interval_hours) || 6;
-    const every = Math.max(hours, 1) * 3600 * 1000;
+async function schedulerTick() {
+  if (isSchedulerStopped()) return;
 
-    await scanQueue.add(
-      { keywordSetId: ks.id, userId: ks.user_id },
-      {
-        repeat: { every },
-        jobId: `scan-${ks.id}`,
-        attempts: 3,
-        backoff: { type: 'exponential', delay: 5000 },
-        removeOnComplete: true,
-        removeOnFail: Number(process.env.REDIS_FAILED_JOBS_TO_KEEP) || 5,
-      }
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, user_id
+       FROM keyword_sets
+       WHERE active = true
+         AND next_scan_at <= NOW()
+         AND deleted_at IS NULL
+       ORDER BY next_scan_at ASC
+       LIMIT 5`
     );
 
-    console.log(`[scheduler] Scheduled ${ks.id} every ${hours}h`);
+    for (const row of rows) {
+      if (!row.user_id) {
+        console.warn(`[scheduler] Skipping ${row.id} — no user_id`);
+        continue;
+      }
+      runScanInBackground(row.id, row.user_id);
+    }
+  } catch (err) {
+    console.error('[scheduler] tick failed:', err?.message || err);
   }
-
-  console.log(`✓ Scheduler started: ${result.rows.length} monitors active`);
 }
 
-module.exports = { startScheduler };
+async function startScheduler() {
+  const { rows } = await pool.query(
+    `SELECT COUNT(*)::int AS n FROM keyword_sets WHERE active = true AND deleted_at IS NULL`
+  );
+  const count = rows[0]?.n ?? 0;
+
+  void schedulerTick();
+
+  schedulerTimer = setInterval(() => {
+    void schedulerTick();
+  }, SCHEDULER_POLL_INTERVAL_MS);
+
+  if (schedulerTimer.unref) schedulerTimer.unref();
+
+  console.log(
+    `✓ Scheduler started: ${count} monitors active, polling every ${Math.round(SCHEDULER_POLL_INTERVAL_MS / 1000)}s`
+  );
+}
+
+function stopScheduler() {
+  if (schedulerTimer) {
+    clearInterval(schedulerTimer);
+    schedulerTimer = null;
+  }
+}
+
+module.exports = { startScheduler, stopScheduler };

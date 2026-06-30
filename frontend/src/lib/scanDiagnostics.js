@@ -7,29 +7,29 @@ export function sanitizeScanErrorMessage(raw) {
     /REQUIRE_AI_CLASSIFIER/i.test(text)
   ) {
     return (
-      'AI classification is required but disabled on the worker. On Render, open signal-worker-web → ' +
-      'Environment and delete SKIP_AI_LEAD_CLASSIFIER, then redeploy.'
+      'AI classification is required but disabled. Remove the SKIP_AI_LEAD_CLASSIFIER env var ' +
+      'to enable AI classification, then redeploy.'
     )
   }
   if (/SKIP_AI_LEAD_CLASSIFIER/i.test(text)) {
     return (
-      'AI lead classification is turned off (SKIP_AI_LEAD_CLASSIFIER). Remove that variable from ' +
-      'signal-worker-web on Render, or set REQUIRE_AI_CLASSIFIER=false on both services.'
+      'AI lead classification is turned off (SKIP_AI_LEAD_CLASSIFIER). Remove that variable, ' +
+      'or set REQUIRE_AI_CLASSIFIER=false.'
     )
   }
   if (/OPENAI_API_KEY/i.test(text) && /missing|not set/i.test(text)) {
-    return 'OPENAI_API_KEY is missing on signal-worker-web. Add it in Render → Environment and redeploy.'
+    return 'OPENAI_API_KEY is missing. Add it to your environment variables and redeploy.'
   }
   if (
     /blocked by network security/i.test(text) ||
     /<!doctype html|<html|<body class=/i.test(text)
   ) {
-    return 'Reddit blocked this server (network security). Check PROXY_LIST and proxy credentials on signal-worker-web.'
+    return 'Reddit blocked this server (network security). Check PROXY_LIST and proxy credentials.'
   }
   if (/bandwidth limit reached|upgrade to continue using the proxy/i.test(text)) {
     return (
-      'Webshare proxy bandwidth is used up. Open webshare.io → Dashboard → upgrade your plan or add bandwidth, ' +
-      'then retry the scan (no Render changes needed unless you rotate PROXY_PASSWORD).'
+      'Webshare proxy bandwidth is used up. Upgrade your plan or add bandwidth at webshare.io, ' +
+      'then retry the scan.'
     )
   }
   if (text.length > 320) return `${text.slice(0, 317)}...`
@@ -103,7 +103,7 @@ export function formatZeroLeadsDiagnostic(data) {
   }
 
   if (d.reddit_auth_error) {
-    return 'Reddit blocked or proxy failed. Set PROXY_LIST and proxy credentials in backend/.env.'
+    return 'Reddit blocked or proxy failed. Set PROXY_LIST and proxy credentials in your environment.'
   }
 
   const raw = Number(d.raw_candidates ?? d.collected_raw ?? 0)
@@ -120,10 +120,10 @@ export function formatZeroLeadsDiagnostic(data) {
     if (Number(d.reddit_empty_response_count || 0) > 0) {
       return (
         'Reddit returned empty through your proxies — no posts collected. ' +
-        'On Render, confirm PROXY_PASSWORD and keep PROXY_USERNAME=qcceojoh-rotate set on signal-worker-web.'
+        'Confirm PROXY_PASSWORD and PROXY_USERNAME are set correctly.'
       )
     }
-    return '0 raw results — Reddit blocked or proxies returned blank. Check signal-worker-web logs and proxy credentials on Render.'
+    return '0 raw results — Reddit blocked or proxies returned blank. Check proxy credentials and backend logs.'
   }
   if (deduped === 0) {
     return 'Results returned but none had valid post IDs after dedupe.'
@@ -140,7 +140,7 @@ export function formatZeroLeadsDiagnostic(data) {
   if (data?.scan_progress?.message) {
     return String(data.scan_progress.message)
   }
-  return summary || 'Scan finished with 0 new leads. Check worker logs.'
+  return summary || 'Scan finished with 0 new leads. Check backend logs.'
 }
 
 /** Show diagnostic summary when lead count is low (< 5). */

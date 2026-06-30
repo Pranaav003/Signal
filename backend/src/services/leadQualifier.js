@@ -37,7 +37,7 @@ function classifierUnavailableReason() {
     if (requireAiClassifier()) {
       return (
         'AI lead classification is disabled (SKIP_AI_LEAD_CLASSIFIER) but scans require it ' +
-        '(REQUIRE_AI_CLASSIFIER). On Render, open signal-worker-web → Environment and delete SKIP_AI_LEAD_CLASSIFIER.'
+        '(REQUIRE_AI_CLASSIFIER). Remove the SKIP_AI_LEAD_CLASSIFIER env var to enable AI classification.'
       );
     }
     return 'AI lead classification is disabled (SKIP_AI_LEAD_CLASSIFIER=true).';

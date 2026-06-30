@@ -74,14 +74,14 @@ const PHASES = [
     progress: [74, 86],
     lines: [
       { type: 'system', text: 'Backend is scoring candidates…' },
-      { type: 'system', text: 'Waiting for worker relevance scores…' },
-      { type: 'system', text: 'Database results will appear when the worker finishes…' },
+      { type: 'system', text: 'Waiting for relevance scores…' },
+      { type: 'system', text: 'Database results will appear when the scan finishes…' },
     ],
   },
   {
     progress: [86, 95],
     lines: [
-      { type: 'system', text: 'Waiting for backend worker results…' },
+      { type: 'system', text: 'Waiting for scan results…' },
       { type: 'system', text: 'Live lead counts update from the database when saved' },
       { type: 'system', text: '__NEXTSCAN__' },
     ],
@@ -126,7 +126,7 @@ function getScanTimingHelper({ status, scanSeconds, terminalResult }) {
   }
 
   if (status === 'queued' || status === 'stuck') {
-    return 'Queued scans will start when the worker is awake and available.'
+    return 'Queued scans will start shortly.'
   }
 
   if (scanSeconds > 300 && (status === 'scanning' || !terminalResult)) {
@@ -209,7 +209,7 @@ export default function ScanProgress({
   const completedRef = useRef(false)
   const leadsFoundRef = useRef(0)
   const lastProgressRef = useRef(null)
-  const lastJobStateRef = useRef(null)
+
   const lastInsertedPollRef = useRef(0)
   const waitingLinesRef = useRef(0)
   const sequenceDoneRef = useRef(false)
@@ -394,7 +394,7 @@ export default function ScanProgress({
     setRetrying(true)
     try {
       await api.post(`/api/keyword-sets/${keywordSetId}/rescan`)
-      appendRawLine('system', 'Scan re-queued. Waiting for worker…')
+      appendRawLine('system', 'Scan re-queued. Waiting to start…')
       lastStatusRef.current = 'queued'
     } catch (e) {
       appendRawLine(
@@ -461,7 +461,7 @@ export default function ScanProgress({
       const st = lastStatusRef.current
       let etaText = ''
       if (st === 'queued') {
-        etaText = workerHintRef.current || 'Waiting for scan worker…'
+        etaText = workerHintRef.current || 'Waiting for scan to start…'
         etaRef.current.style.color = 'var(--yellow)'
         etaRef.current.classList.add('scan-eta-finishing')
       } else if (st === 'unknown') {
@@ -509,8 +509,8 @@ export default function ScanProgress({
           message:
             workerHintRef.current ||
             (import.meta.env.PROD
-              ? 'This scan appears queued or stuck. Check signal-worker-web on Render and keep /health pinged every 5 minutes.'
-              : 'This scan appears queued or stuck. Make sure the worker is running (cd backend && npm run worker).'),
+              ? 'This scan appears queued or stuck. Try Retry scan.'
+              : 'This scan appears queued or stuck. Try Retry scan.'),
         })
       }
     }, 1000)
@@ -584,7 +584,7 @@ export default function ScanProgress({
         startWaitingPulse()
         appendRawLine(
           'warn',
-          data?.worker_hint || 'Queued — waiting for the worker to pick up this scan.'
+          data?.worker_hint || 'Queued — waiting for scan to start.'
         )
         appendRawLine('system', 'The scan has not started yet. No Reddit collection is running.')
         return
@@ -632,7 +632,6 @@ export default function ScanProgress({
         const status = String(data?.status || 'scanning')
         lastStatusRef.current = status
         setScanStatus(status)
-        lastJobStateRef.current = data?.job_state || null
 
         if (Number(data?.query_count) > 0) {
           setQueriesShown(Number(data.query_count))
@@ -653,7 +652,7 @@ export default function ScanProgress({
               data.worker_hint ||
                 (status === 'stuck'
                   ? 'Worker is not processing this scan.'
-                  : 'Queued — waiting for worker.')
+                  : 'Queued — waiting for scan to start.')
             )
             appendRawLine('system', 'The scan has not started yet.')
           }
@@ -817,7 +816,7 @@ export default function ScanProgress({
             stallHintShownRef.current = true
             appendRawLine(
               'warn',
-              'The log above is a preview while the server runs the real scan. Lead counts below are from the database and update when the worker finishes.'
+              'The log above is a preview while the server runs the real scan. Lead counts below are from the database and update when the scan finishes.'
             )
           }
         }
@@ -1042,15 +1041,15 @@ export default function ScanProgress({
                   p?.pair_index && p?.pairs_total
                     ? ` (${p.pair_index}/${p.pairs_total} subreddit pairs)`
                     : ''
-                if (lastStatusRef.current === 'scanning' && lastJobStateRef.current === 'active') {
+                if (lastStatusRef.current === 'scanning') {
                   if (collected > 0) {
                     return `${collected} raw candidates collected${pair}. Leads are saved when the scan finishes (Reddit rate limits can make this take 15–25 min).`
                   }
-                  return 'Worker is still scanning. Large monitors can take 15–25 minutes when Reddit rate-limits requests.'
+                  return 'Scan is still running. Large monitors can take 15–25 minutes when Reddit rate-limits requests.'
                 }
                 return (
                   workerHint ||
-                  'This scan appears queued or stuck. Make sure the worker is running (cd backend && npm run worker).'
+                  'This scan appears queued or stuck. Try Retry scan.'
                 )
               })()}
             </p>
@@ -1251,8 +1250,6 @@ export default function ScanProgress({
                   } else {
                     setManualCheckDetail({
                       status: data.status,
-                      job_state: data.job_state,
-                      worker_state: data.worker_state,
                       leads_found: data.leads_found,
                       current_scan_inserted_count: data.current_scan_inserted_count,
                       active_monitor_lead_count: data.active_monitor_lead_count,
@@ -1293,8 +1290,7 @@ export default function ScanProgress({
             style={{ borderColor: 'var(--border)', background: 'var(--bg-2)' }}
           >
             <p className="m-0" style={{ color: 'var(--text-2)' }}>
-              Status: {manualCheckDetail.status}, Job: {manualCheckDetail.job_state || 'n/a'},
-              Worker: {manualCheckDetail.worker_state || 'unknown'}, This scan:{' '}
+              Status: {manualCheckDetail.status}, This scan:{' '}
               {manualCheckDetail.current_scan_inserted_count ??
                 manualCheckDetail.leads_found ??
                 0}

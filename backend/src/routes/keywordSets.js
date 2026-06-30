@@ -2,13 +2,8 @@ const express = require('express');
 
 const pool = require('../db/connection');
 const { generateQueries } = require('../services/keywordProcessor');
-const {
-  addScanJob,
-  getManualScanJobState,
-  rescheduleRepeatableScanForKeywordSet,
-} = require('../jobs/scanJob');
+const { addScanJob } = require('../jobs/scanJob');
 const { getScanRunForStatus } = require('../services/scanRunService');
-const { readWorkerHeartbeat, isHeartbeatFresh } = require('../services/workerHeartbeat');
 const { generateExamplePost } = require('../services/draftService');
 const { normalizeSearchFocus } = require('../utils/searchFocus');
 const { deleteMonitorForUser } = require('../services/monitorLifecycle');
@@ -322,202 +317,102 @@ router.get('/:id/scan-status', async (req, res) => {
 
     const scanProgress = parseJsonField(keywordSet.scan_progress, {});
     const scanRun = await getScanRunForStatus(pool, keywordSet);
-    const runStatusEarly = String(scanRun?.status || '').toLowerCase();
+
+    // Derive status purely from scan_runs + scan_progress — no Bull, no worker heartbeat
+    const runStatus = String(scanRun?.status || '').toLowerCase();
+    const progressPhase = String(scanProgress.phase || '').toLowerCase();
     const runDiagnostics = parseJsonField(scanRun?.diagnostics, {});
-    const progressDiagnostics = parseJsonField(scanProgress.diagnostics, {});
-    const { job, state: jobState, orphan_waiting, in_wait_queue, queue_name: manualQueueName } =
-      await getManualScanJobState(id);
 
-    const liveProgressFields = Object.fromEntries(
-      Object.entries(scanProgress).filter(
-        ([k]) =>
-          !['phase', 'message', 'completed_at', 'queued_at', 'started_at', 'job_id'].includes(k)
-      )
-    );
-
+    // Merge diagnostics: completed/failed runs use DB diagnostics; running uses live progress
     const diagnostics =
-      runStatusEarly === 'complete' || runStatusEarly === 'failed'
+      runStatus === 'complete' || runStatus === 'failed'
         ? { ...runDiagnostics, scan_run_id: scanRun?.id || runDiagnostics.scan_run_id }
-        : {
-            ...runDiagnostics,
-            ...progressDiagnostics,
-            ...liveProgressFields,
-          };
+        : { ...runDiagnostics, ...parseJsonField(scanProgress.diagnostics, {}) };
 
-    let insertedThisRun = Number(
-      diagnostics.inserted_count ?? scanProgress.inserted_count ?? scanProgress.leads_saved ?? 0
-    );
-
+    // Authoritative lead count from DB
+    let insertedThisRun = Number(diagnostics.inserted_count ?? 0);
     if (scanRun?.id) {
-      const countResult = await pool.query(
-        `SELECT COUNT(*)::int AS c
-         FROM leads
-         WHERE scan_run_id = $1 AND COALESCE(is_active, true) = true`,
+      const { rows: countRows } = await pool.query(
+        `SELECT COUNT(*)::int AS c FROM leads WHERE scan_run_id = $1 AND COALESCE(is_active, true) = true`,
         [scanRun.id]
       );
-      const dbCount = countResult.rows[0]?.c;
+      const dbCount = countRows[0]?.c;
       if (Number.isFinite(dbCount)) insertedThisRun = dbCount;
     }
 
-    const activeMonitorResult = await pool.query(
-      `SELECT COUNT(*)::int AS c
-       FROM leads
-       WHERE keyword_set_id = $1
-         AND user_id = $2
-         AND COALESCE(is_active, true) = true`,
+    // Monitor-level lead counts
+    const { rows: activeRows } = await pool.query(
+      `SELECT COUNT(*)::int AS c FROM leads WHERE keyword_set_id = $1 AND user_id = $2 AND COALESCE(is_active, true) = true`,
       [id, keywordSet.user_id]
     );
-    const activeMonitorLeadCount = activeMonitorResult.rows[0]?.c ?? 0;
+    const activeMonitorLeadCount = activeRows[0]?.c ?? 0;
 
-    const totalMonitorResult = await pool.query(
+    const { rows: totalRows } = await pool.query(
       `SELECT COUNT(*)::int AS c FROM leads WHERE keyword_set_id = $1 AND user_id = $2`,
       [id, keywordSet.user_id]
     );
-    const totalMonitorLeadCount = totalMonitorResult.rows[0]?.c ?? 0;
-
-    const leadsFound = insertedThisRun;
-    const currentScanInsertedCount = insertedThisRun;
-
-    const heartbeat = await readWorkerHeartbeat();
-    const workerAlive = isHeartbeatFresh(heartbeat, 30);
-    const workerState = workerAlive ? 'available' : 'missing';
+    const totalMonitorLeadCount = totalRows[0]?.c ?? 0;
 
     const queryCount = Array.isArray(keywordSet.queries) ? keywordSet.queries.length : 0;
-    const subredditCount = Array.isArray(keywordSet.subreddits)
-      ? keywordSet.subreddits.length
-      : 0;
+    const subredditCount = Array.isArray(keywordSet.subreddits) ? keywordSet.subreddits.length : 0;
 
     const queuedAt = scanProgress.queued_at || scanProgress.started_at;
     const queuedForSeconds = queuedAt
       ? Math.max(0, Math.floor((Date.now() - new Date(queuedAt).getTime()) / 1000))
       : 0;
 
-    const runStatus = String(scanRun?.status || '').toLowerCase();
+    // Determine scan status from scan_runs only
     let status = 'idle';
-    const progressPhase = String(scanProgress.phase || '').toLowerCase();
-    let displayJobState = jobState;
 
     if (runStatus === 'complete') {
       status = 'complete';
-      displayJobState = null;
-    } else if (progressPhase === 'complete' && keywordSet.last_scanned_at) {
-      status = 'complete';
-      displayJobState = null;
     } else if (runStatus === 'failed') {
-      const runError = String(scanRun?.error_message || scanProgress.message || '');
-      const recoverableFailedScan =
-        insertedThisRun > 0 &&
-        (/Bull job is still active|diagnostics consistency/i.test(runError) ||
-          progressPhase === 'complete');
-      if (recoverableFailedScan) {
+      // If the run failed but we still inserted leads, treat as complete
+      const runError = String(scanRun?.error_message || '');
+      if (insertedThisRun > 0 && /diagnostics consistency/i.test(runError)) {
         status = 'complete';
-        displayJobState = null;
       } else {
         status = 'failed';
-        displayJobState = job ? 'failed' : null;
       }
+    } else if (runStatus === 'running') {
+      status = 'scanning';
+    } else if (runStatus === 'queued') {
+      // Stuck detection: queued for >5 min with no progress
+      status = queuedForSeconds >= 300 ? 'stuck' : 'queued';
+    } else if (['collecting', 'scoring', 'qualifying', 'saving', 'persist', 'qualify', 'reddit_global', 'subreddit', 'active'].includes(progressPhase)) {
+      status = 'scanning';
+    } else if (progressPhase === 'complete' && keywordSet.last_scanned_at) {
+      status = 'complete';
     } else if (progressPhase === 'error') {
       status = 'failed';
-    } else if (orphan_waiting) {
-      status = 'stuck';
-    } else if (!job && progressPhase === 'queued' && !keywordSet.last_scanned_at && queuedForSeconds >= 90) {
-      status = 'stuck';
-    } else if (
-      ['collecting', 'scoring', 'qualifying', 'saving', 'persist', 'qualify', 'reddit_global', 'subreddit', 'active'].includes(
-        progressPhase
-      ) ||
-      runStatus === 'running'
-    ) {
-      status = 'scanning';
-      if (jobState === 'active') displayJobState = 'active';
-    } else if (jobState === 'active' && runStatus !== 'complete') {
-      status = 'scanning';
-    } else if (
-      ['waiting', 'delayed', 'paused'].includes(jobState || '') ||
-      progressPhase === 'queued'
-    ) {
-      const stuckNoWorker = !workerAlive && queuedForSeconds >= 30;
-      const stuckLongWait =
-        (jobState === 'waiting' || jobState === 'delayed') && queuedForSeconds >= 180;
-      status = stuckNoWorker || stuckLongWait ? 'stuck' : 'queued';
-    } else if (runStatus === 'queued' || progressPhase === 'queued') {
-      const stuckNoWorker = !workerAlive && queuedForSeconds >= 30;
-      const stuckLongWait =
-        (jobState === 'waiting' || jobState === 'delayed') && queuedForSeconds >= 180;
-      status = stuckNoWorker || stuckLongWait || orphan_waiting ? 'stuck' : 'queued';
-    } else if (progressPhase === 'complete' && runStatus === 'complete') {
+    } else if (progressPhase === 'queued') {
+      status = queuedForSeconds >= 300 ? 'stuck' : 'queued';
+    } else if (keywordSet.last_scanned_at) {
       status = 'complete';
-    } else if (keywordSet.last_scanned_at && runStatus !== 'running' && runStatus !== 'queued') {
-      status = 'complete';
-      displayJobState = null;
     }
 
-    if (
-      progressPhase === 'queued' &&
-      runStatus !== 'complete' &&
-      (jobState === null || jobState === 'unknown') &&
-      queuedForSeconds >= 120 &&
-      !keywordSet.last_scanned_at
-    ) {
-      status = 'stuck';
-    }
-
+    // Worker hint — simplified for single-process architecture
     let workerHint = null;
-    const isProduction = process.env.NODE_ENV === 'production';
-    const localWorkerStartHint =
-      'Start it with: cd backend && npm run worker (or npm run dev from the repo root).';
-    const prodWorkerStartHint =
-      'Check signal-worker-web on Render (GET /health). Free tier sleeps when idle — keep it awake with UptimeRobot every 5 minutes.';
-
-    if (orphan_waiting) {
-      workerHint = isProduction
-        ? 'Scan is queued but the job is missing from the worker queue. Click Retry scan, or redeploy signal-worker-web on Render.'
-        : 'Scan is queued but the job is not in the worker queue (orphan). Click Rescan on this monitor, or restart the backend worker.';
-    } else if (status === 'stuck' && !workerAlive) {
-      workerHint = isProduction ? prodWorkerStartHint : localWorkerStartHint;
+    if (status === 'failed' && /reddit blocked|network security|REDDIT_BLOCKED/i.test(String(scanRun?.error_message || ''))) {
+      workerHint = 'Reddit blocked this request. Check PROXY_LIST and proxy credentials, then retry.';
     } else if (status === 'stuck') {
-      workerHint = isProduction
-        ? 'Scan is queued but not progressing. Try Retry scan or check signal-worker-web logs on Render.'
-        : 'Scan is queued but not progressing. Try Retry scan or check GET /api/debug/scan-queue.';
-    } else if (!job && !keywordSet.last_scanned_at && progressPhase !== 'complete') {
-      workerHint = isProduction ? prodWorkerStartHint : localWorkerStartHint;
+      workerHint = 'Scan appears stuck. Click Retry scan to re-queue it.';
     } else if (status === 'queued') {
-      workerHint = workerAlive
-        ? 'Scan is queued — worker is running and will pick this up soon.'
-        : isProduction
-          ? prodWorkerStartHint
-          : localWorkerStartHint;
-    } else if (jobState === 'active') {
-      workerHint = 'Worker is running this scan.';
-    } else if (
-      status === 'failed' &&
-      (scanProgress.reddit_auth_error ||
-        /reddit blocked|network security|REDDIT_BLOCKED/i.test(
-          String(scanRun?.error_message || scanProgress.message || '')
-        ))
-    ) {
-      workerHint = isProduction
-        ? 'Reddit blocked requests from signal-worker-web. Check PROXY_LIST / PROXY_USERNAME / PROXY_PASSWORD on Render, or replace blocked Webshare IPs.'
-        : 'Reddit blocked this request. Set PROXY_LIST and proxy credentials in backend/.env, then restart the worker.';
+      workerHint = 'Scan is queued and will start shortly.';
     }
 
-    const plannerSource =
-      diagnostics.planner_source || scanProgress.planner_source || null;
-    const classifierSource =
-      diagnostics.classifier_source || scanProgress.classifier_source || null;
+    const plannerSource = diagnostics.planner_source || scanProgress.planner_source || null;
+    const classifierSource = diagnostics.classifier_source || scanProgress.classifier_source || null;
 
     const scanProgressOut = {
       ...scanProgress,
       ...diagnostics,
       inserted_count: insertedThisRun,
       leads_saved: insertedThisRun,
-      leads_found: leadsFound,
+      leads_found: insertedThisRun,
       planner_source: plannerSource,
       classifier_source: classifierSource,
-      diagnostic_summary:
-        scanProgress.diagnostic_summary ||
-        diagnostics.diagnostic_summary ||
-        null,
+      diagnostic_summary: scanProgress.diagnostic_summary || diagnostics.diagnostic_summary || null,
     };
 
     const classifierWarning =
@@ -528,20 +423,12 @@ router.get('/:id/scan-status', async (req, res) => {
     return res.json({
       id: keywordSet.id,
       status,
-      job_state: displayJobState,
-      job_in_wait_list: in_wait_queue,
-      job_orphan_waiting: orphan_waiting,
-      worker_state: workerState,
-      manual_scan_queue: manualQueueName,
-      in_manual_wait_queue: Boolean(in_wait_queue),
-      orphan_job: Boolean(orphan_waiting),
-      job_id: job?.id || scanProgress.job_id || null,
       scan_run_id: scanRun?.id || keywordSet.current_scan_run_id || null,
       started_at: scanProgress.started_at || scanRun?.started_at || null,
       queued_for_seconds: queuedForSeconds,
       last_scanned_at: keywordSet.last_scanned_at,
-      leads_found: leadsFound,
-      current_scan_inserted_count: currentScanInsertedCount,
+      leads_found: insertedThisRun,
+      current_scan_inserted_count: insertedThisRun,
       active_monitor_lead_count: activeMonitorLeadCount,
       total_monitor_lead_count: totalMonitorLeadCount,
       classifier_warning: classifierWarning,

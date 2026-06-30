@@ -1,20 +1,9 @@
 const express = require('express');
 
-const {
-  getScanQueueSnapshot,
-  SCAN_QUEUE_NAME,
-  MANUAL_SCAN_QUEUE_NAME,
-} = require('../jobs/scanJob');
 const { generateQueries } = require('../services/keywordProcessor');
-const {
-  REDIS_URL,
-  redactRedisUrl,
-  createRedisClient,
-} = require('../jobs/queueFactory');
-const {
-  readWorkerHeartbeat,
-  isHeartbeatFresh,
-} = require('../services/workerHeartbeat');
+const { activeScans, MAX_CONCURRENT_SCANS, isSchedulerStopped } = require('../jobs/scanRunner');
+
+const pool = require('../db/connection');
 
 const router = express.Router();
 
@@ -60,102 +49,62 @@ router.post('/keyword-plan', async (req, res) => {
 });
 
 /**
- * Queue health for dev — API + worker must share REDIS_URL and manual queue name.
+ * Scheduler + scan status for dev — replaces the old Redis/Bull scan-queue endpoint.
  */
 router.get('/scan-queue', async (req, res) => {
-  const client = createRedisClient();
-  let redisConnected = false;
-
   try {
-    const pong = await client.ping();
-    redisConnected = pong === 'PONG';
-  } catch (err) {
-    return res.status(503).json({
-      redis: { connected: false, url: redactRedisUrl(REDIS_URL), error: err.message },
-      queues: null,
-      worker: { heartbeat_seen: false, message: 'Redis unreachable' },
-    });
-  } finally {
-    client.disconnect();
-  }
+    // Active in-process scans
+    const active = [...activeScans];
 
-  try {
-    const heartbeat = await readWorkerHeartbeat();
-    const heartbeatSeen = isHeartbeatFresh(heartbeat, 30);
-    const snapshot = await getScanQueueSnapshot();
+    // Recent scan_runs from DB
+    const { rows: recentRuns } = await pool.query(
+      `SELECT id, keyword_set_id, status, started_at, completed_at, error_message
+       FROM scan_runs
+       ORDER BY created_at DESC
+       LIMIT 20`
+    );
 
-    const worker = heartbeatSeen
-      ? {
-          heartbeat_seen: true,
-          last_heartbeat_at: heartbeat.last_seen_at,
-          process_id: heartbeat.pid,
-          consumer_queues: heartbeat.consumer_queues || [
-            MANUAL_SCAN_QUEUE_NAME,
-            SCAN_QUEUE_NAME,
-          ],
-          consumer_queue_name: heartbeat.consumer_queue_name || SCAN_QUEUE_NAME,
-          started_at: heartbeat.started_at,
-        }
-      : {
-          heartbeat_seen: false,
-          message:
-            'Worker is not running or not connected to this Redis queue. Start: cd backend && npm run worker',
-        };
+    // Due monitors (next_scan_at <= now)
+    const { rows: dueMonitors } = await pool.query(
+      `SELECT id, product_description, next_scan_at, scan_interval_hours
+       FROM keyword_sets
+       WHERE active = true AND next_scan_at <= NOW()
+       ORDER BY next_scan_at ASC
+       LIMIT 10`
+    );
 
-    const sched = snapshot.scheduled;
-    const man = snapshot.manual;
+    // Counts by status
+    const { rows: statusCounts } = await pool.query(
+      `SELECT status, COUNT(*)::int AS count
+       FROM scan_runs
+       WHERE created_at > NOW() - INTERVAL '24 hours'
+       GROUP BY status`
+    );
+
+    const countsByStatus = {};
+    for (const row of statusCounts) {
+      countsByStatus[row.status] = row.count;
+    }
 
     return res.json({
-      redis: {
-        connected: redisConnected,
-        url: redactRedisUrl(REDIS_URL),
+      scheduler: {
+        running: !isSchedulerStopped(),
+        active_scans: active,
+        max_concurrent_scans: MAX_CONCURRENT_SCANS,
       },
-      queues: {
-        manual: {
-          name: man.name,
-          prefix: man.prefix,
-          waiting: man.counts.waiting,
-          active: man.counts.active,
-          delayed: man.counts.delayed,
-          completed: man.counts.completed,
-          failed: man.counts.failed,
-          stalled: man.counts.stalled ?? 0,
-          sample_waiting: man.waiting,
-          sample_active: man.active,
-        },
-        scheduled: {
-          name: sched.name,
-          prefix: sched.prefix,
-          waiting: sched.counts.waiting,
-          active: sched.counts.active,
-          delayed: sched.counts.delayed,
-          completed: sched.counts.completed,
-          failed: sched.counts.failed,
-          stalled: sched.counts.stalled ?? 0,
-          sample_waiting: sched.waiting,
-          sample_active: sched.active,
-        },
-      },
-      worker,
-      recent_jobs: {
-        manual_waiting: man.waiting,
-        manual_active: man.active,
-        manual_failed: man.failed,
-        scheduled_waiting: sched.waiting,
-        scheduled_active: sched.active,
-        scheduled_failed: sched.failed,
-      },
+      due_monitors: dueMonitors,
+      recent_scan_runs: recentRuns,
+      last_24h_counts: countsByStatus,
     });
   } catch (err) {
     console.error('[debug] GET /scan-queue', err);
     return res.status(500).json({
-      error: err && err.message ? err.message : 'Failed to read scan queue',
+      error: err && err.message ? err.message : 'Failed to read scan status',
     });
   }
 });
 
 router.delete('/purge-deleted-monitors', async (req, res) => {
-  const pool = require('../db/connection');
   const client = await pool.connect();
   try {
     await client.query('BEGIN');

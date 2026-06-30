@@ -528,7 +528,7 @@ async function validateRedditCredentials() {
         error = {
           code: 'REDDIT_EMPTY',
           message:
-            'Reddit search returned 0 results through the configured proxy. Check PROXY_PASSWORD and Webshare credentials on signal-worker-web.',
+            'Reddit search returned 0 results through the configured proxy. Check PROXY_PASSWORD and Webshare credentials.',
         };
       } else {
         error = { message: 'Reddit probe did not return usable results.' };
