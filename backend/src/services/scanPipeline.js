@@ -432,7 +432,7 @@ function explainZeroLeads(stats) {
     return `Scan complete — no qualified leads found. ${stats.rejection_summary}`;
   }
   if (stats.reddit_auth_error) {
-    return 'Reddit blocked this server (network security). Check PROXY_LIST and Webshare proxy credentials on signal-worker-web.';
+    return 'Reddit blocked this server (network security). Check PROXY_LIST and Webshare proxy credentials.';
   }
   if (stats.collected_raw === 0) {
     if (stats.reddit_error_count > 0 || stats.hn_error_count > 0) {
@@ -447,10 +447,10 @@ function explainZeroLeads(stats) {
     if ((stats.reddit_empty_response_count || 0) > 0) {
       return (
         'Reddit searches returned empty through your Webshare proxies. ' +
-        'Keep PROXY_USERNAME=qcceojoh-rotate on signal-worker-web (it is tried first), verify PROXY_PASSWORD, or rotate credentials in Webshare.'
+        'Keep PROXY_USERNAME=qcceojoh-rotate (it is tried first), verify PROXY_PASSWORD, or rotate credentials in Webshare.'
       );
     }
-    return '0 raw results from Reddit and HN. Reddit blocks direct requests — check signal-worker-web proxy env vars and logs.';
+    return '0 raw results from Reddit and HN. Reddit blocks direct requests — check proxy env vars and logs.';
   }
   if (stats.deduped_count === 0) {
     return 'Results returned but none had valid post_id after dedupe.';
