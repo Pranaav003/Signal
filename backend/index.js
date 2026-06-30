@@ -15,8 +15,14 @@ const trackedRepliesRouter = require('./src/routes/trackedReplies');
 const debugRouter = require('./src/routes/debug');
 
 const { startScheduler } = require('./src/jobs/scheduler');
-const { initWorker } = require('./src/jobs/scanJob');
-const { startTrackerScheduler, initTrackerWorker } = require('./src/jobs/trackerJob');
+const { startTrackerScheduler } = require('./src/jobs/trackerJob');
+const {
+  activeScans,
+  MAX_CONCURRENT_SCANS,
+  recoverOrphanedScans,
+  startGracefulShutdownHandlers,
+  memoryUsageOk,
+} = require('./src/jobs/scanRunner');
 
 const app = express();
 const port = Number(process.env.PORT) || 3001;
@@ -61,7 +67,6 @@ const allowedOrigins = new Set(
   [
     'http://localhost:5173',
     'http://localhost:3000',
-    'https://signal-frontend-e4oa.onrender.com',
     process.env.FRONTEND_URL,
     ...(process.env.CORS_EXTRA_ORIGINS || '').split(','),
   ]
@@ -75,10 +80,6 @@ const corsOptions = {
 
     const normalized = normalizeOrigin(origin);
     if (normalized && allowedOrigins.has(normalized)) {
-      return callback(null, true);
-    }
-
-    if (/^https:\/\/signal-frontend-[a-z0-9-]+\.onrender\.com$/.test(origin)) {
       return callback(null, true);
     }
 
@@ -148,14 +149,22 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/health', (req, res) => {
+app.get('/health', async (req, res) => {
+  let dbOk = false;
+  try {
+    await require('./src/db/connection').query('SELECT 1');
+    dbOk = true;
+  } catch {
+    dbOk = false;
+  }
+
   res.json({
-    ok: true,
+    ok: dbOk,
     service: 'signal-backend',
-    timestamp: new Date().toISOString(),
+    activeScans: activeScans.size,
+    maxConcurrentScans: MAX_CONCURRENT_SCANS,
     uptimeSeconds: Math.round(process.uptime()),
     databaseConfigured: Boolean(process.env.DATABASE_URL),
-    redisConfigured: Boolean(process.env.REDIS_URL),
     openaiConfigured: Boolean(process.env.OPENAI_API_KEY),
     trustProxy: app.get('trust proxy'),
   });
@@ -165,7 +174,7 @@ app.use('/api', apiRouter);
 app.use('/api/users', usersRouter);
 app.use('/api/keyword-sets', keywordSetsRouter);
 app.use('/api/leads', leadsRouter);
-app.use('/api/tracked-replies', trackedRepliesRouter);
+app.use('/api/trackedReplies', trackedRepliesRouter);
 app.use('/api/debug', debugRouter);
 
 app.use((req, res) => {
@@ -193,14 +202,10 @@ app.use((err, req, res, next) => {
   });
 });
 
-const server = app.listen(port, () => {
+const server = app.listen(port, async () => {
   console.log(`Signal backend running on port ${port}`);
 
-  if (process.env.SKIP_EMBEDDED_WORKERS !== 'true') {
-    initWorker();
-    initTrackerWorker();
-    console.log('✓ Embedded queue workers (scan + reply tracker)');
-  }
+  await recoverOrphanedScans();
 
   startScheduler().catch((err) => {
     console.error(
@@ -215,6 +220,8 @@ const server = app.listen(port, () => {
       err && err.message ? err.message : err
     );
   });
+
+  startGracefulShutdownHandlers();
 });
 
 server.on('error', (err) => {
