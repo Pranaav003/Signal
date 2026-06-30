@@ -74,14 +74,14 @@ const PHASES = [
     progress: [74, 86],
     lines: [
       { type: 'system', text: 'Backend is scoring candidates…' },
-      { type: 'system', text: 'Waiting for worker relevance scores…' },
-      { type: 'system', text: 'Database results will appear when the worker finishes…' },
+      { type: 'system', text: 'Waiting for relevance scores…' },
+      { type: 'system', text: 'Database results will appear when the scan finishes…' },
     ],
   },
   {
     progress: [86, 95],
     lines: [
-      { type: 'system', text: 'Waiting for backend worker results…' },
+      { type: 'system', text: 'Waiting for scan results…' },
       { type: 'system', text: 'Live lead counts update from the database when saved' },
       { type: 'system', text: '__NEXTSCAN__' },
     ],
@@ -126,7 +126,7 @@ function getScanTimingHelper({ status, scanSeconds, terminalResult }) {
   }
 
   if (status === 'queued' || status === 'stuck') {
-    return 'Queued scans will start when the worker is awake and available.'
+    return 'Queued scans will start shortly.'
   }
 
   if (scanSeconds > 300 && (status === 'scanning' || !terminalResult)) {
@@ -394,7 +394,7 @@ export default function ScanProgress({
     setRetrying(true)
     try {
       await api.post(`/api/keyword-sets/${keywordSetId}/rescan`)
-      appendRawLine('system', 'Scan re-queued. Waiting for worker…')
+      appendRawLine('system', 'Scan re-queued. Waiting to start…')
       lastStatusRef.current = 'queued'
     } catch (e) {
       appendRawLine(
@@ -461,7 +461,7 @@ export default function ScanProgress({
       const st = lastStatusRef.current
       let etaText = ''
       if (st === 'queued') {
-        etaText = workerHintRef.current || 'Waiting for scan worker…'
+        etaText = workerHintRef.current || 'Waiting for scan to start…'
         etaRef.current.style.color = 'var(--yellow)'
         etaRef.current.classList.add('scan-eta-finishing')
       } else if (st === 'unknown') {
@@ -509,8 +509,8 @@ export default function ScanProgress({
           message:
             workerHintRef.current ||
             (import.meta.env.PROD
-              ? 'This scan appears queued or stuck. Check signal-worker-web on Render and keep /health pinged every 5 minutes.'
-              : 'This scan appears queued or stuck. Make sure the worker is running (cd backend && npm run worker).'),
+              ? 'This scan appears queued or stuck. Try Retry scan.'
+              : 'This scan appears queued or stuck. Try Retry scan.'),
         })
       }
     }, 1000)
@@ -584,7 +584,7 @@ export default function ScanProgress({
         startWaitingPulse()
         appendRawLine(
           'warn',
-          data?.worker_hint || 'Queued — waiting for the worker to pick up this scan.'
+          data?.worker_hint || 'Queued — waiting for scan to start.'
         )
         appendRawLine('system', 'The scan has not started yet. No Reddit collection is running.')
         return
@@ -653,7 +653,7 @@ export default function ScanProgress({
               data.worker_hint ||
                 (status === 'stuck'
                   ? 'Worker is not processing this scan.'
-                  : 'Queued — waiting for worker.')
+                  : 'Queued — waiting for scan to start.')
             )
             appendRawLine('system', 'The scan has not started yet.')
           }
